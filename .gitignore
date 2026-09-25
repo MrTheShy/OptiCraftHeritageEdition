@@ -398,3 +398,6 @@ ninja.exe
 extracted_assets/
 extracted_assets_vanilla/
 *.pak
+build-vita/
+build-vita.log
+vita-deps/

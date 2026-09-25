@@ -47,6 +47,11 @@ if(NINTENDO_WII OR (DEFINED PLATFORM AND PLATFORM STREQUAL "WII"))
     return()
 endif()
 
+if(VITA OR (DEFINED PLATFORM AND PLATFORM STREQUAL "VITA"))
+    include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/vita.cmake)
+    return()
+endif()
+
 enable_testing()
 
 function(opticraft_add_optional_test target test_source)
