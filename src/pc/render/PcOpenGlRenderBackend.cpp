@@ -14,6 +14,37 @@
 #include <cstdio>
 #include <cstring>
 
+#ifdef VITA_PLATFORM
+#include <functional>
+#include <memory>
+#include <utility>
+#include <vector>
+
+namespace
+{
+std::vector<std::vector<std::function<void()>>> g_vitaLists(1);
+int g_vitaRecording = 0;
+
+bool vitaRecord(std::function<void()> command)
+{
+    if (g_vitaRecording <= 0)
+        return false;
+    g_vitaLists[static_cast<std::size_t>(g_vitaRecording)].push_back(std::move(command));
+    return true;
+}
+}
+
+namespace PcOpenGlRenderBackend
+{
+bool renderCaptureInterleaved(const RenderInterleavedMesh& mesh, RenderCapturedMesh& out, bool append);
+bool renderDrawCaptured(const RenderCapturedMesh& mesh);
+}
+
+#define VITA_RECORD(call) if (vitaRecord([=] { call; })) return
+#else
+#define VITA_RECORD(call)
+#endif
+
 
 #ifndef GL_NEAREST_MIPMAP_LINEAR
 #define GL_NEAREST_MIPMAP_LINEAR 0x2702
@@ -119,6 +150,7 @@ void glGetQueryObjectuivARB(GLuint query, GLenum parameter, GLuint *value)
 
 void renderEnable(RenderCapability capability)
 {
+    VITA_RECORD(PcOpenGlRenderBackend::renderEnable(capability));
     switch (capability)
     {
         case RenderCapability::Texture2D: glEnable(GL_TEXTURE_2D); break;
@@ -130,7 +162,11 @@ void renderEnable(RenderCapability capability)
         case RenderCapability::Fog: glEnable(GL_FOG); break;
         case RenderCapability::Lighting: glEnable(GL_LIGHTING); break;
         case RenderCapability::Normalize: glEnable(GL_NORMALIZE); break;
+#ifdef VITA_PLATFORM
+        case RenderCapability::RescaleNormal: glEnable(GL_NORMALIZE); break;
+#else
         case RenderCapability::RescaleNormal: glEnable(GL_RESCALE_NORMAL); break;
+#endif
         case RenderCapability::Light0: glEnable(GL_LIGHT0); break;
         case RenderCapability::Light1: glEnable(GL_LIGHT1); break;
         case RenderCapability::PolygonOffsetFill: glEnable(GL_POLYGON_OFFSET_FILL); break;
@@ -139,6 +175,7 @@ void renderEnable(RenderCapability capability)
 
 void renderDisable(RenderCapability capability)
 {
+    VITA_RECORD(PcOpenGlRenderBackend::renderDisable(capability));
     switch (capability)
     {
         case RenderCapability::Texture2D: glDisable(GL_TEXTURE_2D); break;
@@ -150,7 +187,11 @@ void renderDisable(RenderCapability capability)
         case RenderCapability::Fog: glDisable(GL_FOG); break;
         case RenderCapability::Lighting: glDisable(GL_LIGHTING); break;
         case RenderCapability::Normalize: glDisable(GL_NORMALIZE); break;
+#ifdef VITA_PLATFORM
+        case RenderCapability::RescaleNormal: glDisable(GL_NORMALIZE); break;
+#else
         case RenderCapability::RescaleNormal: glDisable(GL_RESCALE_NORMAL); break;
+#endif
         case RenderCapability::Light0: glDisable(GL_LIGHT0); break;
         case RenderCapability::Light1: glDisable(GL_LIGHT1); break;
         case RenderCapability::PolygonOffsetFill: glDisable(GL_POLYGON_OFFSET_FILL); break;
@@ -159,6 +200,7 @@ void renderDisable(RenderCapability capability)
 
 void renderBlendFunc(RenderBlendFactor source, RenderBlendFactor destination)
 {
+    VITA_RECORD(PcOpenGlRenderBackend::renderBlendFunc(source, destination));
     auto glFactor = [](RenderBlendFactor factor) -> GLenum
     {
         switch (factor)
@@ -181,11 +223,13 @@ void renderBlendFunc(RenderBlendFactor source, RenderBlendFactor destination)
 
 void renderDepthMask(bool enabled)
 {
+    VITA_RECORD(PcOpenGlRenderBackend::renderDepthMask(enabled));
     glDepthMask(enabled ? GL_TRUE : GL_FALSE);
 }
 
 void renderDepthFunc(RenderCompare function)
 {
+    VITA_RECORD(PcOpenGlRenderBackend::renderDepthFunc(function));
     auto glCompare = [](RenderCompare compare) -> GLenum
     {
         switch (compare)
@@ -206,6 +250,7 @@ void renderDepthFunc(RenderCompare function)
 
 void renderAlphaFunc(RenderCompare function, float reference)
 {
+    VITA_RECORD(PcOpenGlRenderBackend::renderAlphaFunc(function, reference));
     auto glCompare = [](RenderCompare compare) -> GLenum
     {
         switch (compare)
@@ -226,6 +271,7 @@ void renderAlphaFunc(RenderCompare function, float reference)
 
 void renderCullFace(RenderFace face)
 {
+    VITA_RECORD(PcOpenGlRenderBackend::renderCullFace(face));
     switch (face)
     {
         case RenderFace::Front: glCullFace(GL_FRONT); break;
@@ -236,26 +282,33 @@ void renderCullFace(RenderFace face)
 
 void renderColorMask(bool red, bool green, bool blue, bool alpha)
 {
+    VITA_RECORD(PcOpenGlRenderBackend::renderColorMask(red, green, blue, alpha));
     glColorMask(red ? GL_TRUE : GL_FALSE, green ? GL_TRUE : GL_FALSE, blue ? GL_TRUE : GL_FALSE, alpha ? GL_TRUE : GL_FALSE);
 }
 
 void renderBindTexture(int texture)
 {
+#ifdef VITA_PLATFORM
+    vitaRecord([=] { PcOpenGlRenderBackend::renderBindTexture(texture); });
+#endif
     glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(texture));
 }
 
 void renderSetActiveTextureUnit(int textureUnit)
 {
+    VITA_RECORD(PcOpenGlRenderBackend::renderSetActiveTextureUnit(textureUnit));
     activeTextureCompat(static_cast<GLenum>(textureUnit));
 }
 
 void renderSetClientActiveTextureUnit(int textureUnit)
 {
+    VITA_RECORD(PcOpenGlRenderBackend::renderSetClientActiveTextureUnit(textureUnit));
     clientActiveTextureCompat(static_cast<GLenum>(textureUnit));
 }
 
 void renderSetMultiTextureCoord(int textureUnit, float u, float v)
 {
+    VITA_RECORD(PcOpenGlRenderBackend::renderSetMultiTextureCoord(textureUnit, u, v));
     multiTexCoord2fCompat(static_cast<GLenum>(textureUnit), u, v);
 }
 
@@ -267,16 +320,19 @@ void renderSetLightmapColors(const std::uint32_t* colors, int count)
 
 void renderColor4f(float r, float g, float b, float a)
 {
+    VITA_RECORD(PcOpenGlRenderBackend::renderColor4f(r, g, b, a));
     glColor4f(r, g, b, a);
 }
 
 void renderColor3f(float r, float g, float b)
 {
+    VITA_RECORD(PcOpenGlRenderBackend::renderColor3f(r, g, b));
     glColor3f(r, g, b);
 }
 
 void renderNormal3f(float x, float y, float z)
 {
+    VITA_RECORD(PcOpenGlRenderBackend::renderNormal3f(x, y, z));
     glNormal3f(x, y, z);
 }
 
@@ -382,6 +438,7 @@ void renderResetResources() {}
 
 void renderFogf(RenderFogParameter parameter, float value)
 {
+    VITA_RECORD(PcOpenGlRenderBackend::renderFogf(parameter, value));
     GLenum glParameter = GL_FOG_DENSITY;
     switch (parameter)
     {
@@ -403,6 +460,7 @@ void renderFogf(RenderFogParameter parameter, float value)
 
 void renderFogi(RenderFogParameter parameter, RenderFogMode value)
 {
+    VITA_RECORD(PcOpenGlRenderBackend::renderFogi(parameter, value));
     const GLenum glParameter = parameter == RenderFogParameter::DistanceMode ? GL_FOG_DISTANCE_MODE_NV : GL_FOG_MODE;
     GLint glMode = GL_LINEAR;
     switch (value)
@@ -417,11 +475,27 @@ void renderFogi(RenderFogParameter parameter, RenderFogMode value)
 
 void renderFogColor(const float* values)
 {
+#ifdef VITA_PLATFORM
+    if (g_vitaRecording > 0)
+    {
+        const float v0 = values[0], v1 = values[1], v2 = values[2], v3 = values[3];
+        vitaRecord([=] { const float copy[4] = {v0, v1, v2, v3}; PcOpenGlRenderBackend::renderFogColor(copy); });
+        return;
+    }
+#endif
     glFogfv(GL_FOG_COLOR, values);
 }
 
 void renderLightfv(int lightIndex, RenderLightParameter parameter, const float* values)
 {
+#ifdef VITA_PLATFORM
+    if (g_vitaRecording > 0)
+    {
+        const float v0 = values[0], v1 = values[1], v2 = values[2], v3 = values[3];
+        vitaRecord([=] { const float copy[4] = {v0, v1, v2, v3}; PcOpenGlRenderBackend::renderLightfv(lightIndex, parameter, copy); });
+        return;
+    }
+#endif
     GLenum glParameter = GL_POSITION;
     switch (parameter)
     {
@@ -435,11 +509,20 @@ void renderLightfv(int lightIndex, RenderLightParameter parameter, const float* 
 
 void renderLightModelAmbient(const float* values)
 {
+#ifdef VITA_PLATFORM
+    if (g_vitaRecording > 0)
+    {
+        const float v0 = values[0], v1 = values[1], v2 = values[2], v3 = values[3];
+        vitaRecord([=] { const float copy[4] = {v0, v1, v2, v3}; PcOpenGlRenderBackend::renderLightModelAmbient(copy); });
+        return;
+    }
+#endif
     glLightModelfv(GL_LIGHT_MODEL_AMBIENT, values);
 }
 
 void renderColorMaterial(RenderFace face, RenderColorMaterialMode mode)
 {
+    VITA_RECORD(PcOpenGlRenderBackend::renderColorMaterial(face, mode));
     GLenum glFace = face == RenderFace::Front ? GL_FRONT : face == RenderFace::Back ? GL_BACK : GL_FRONT_AND_BACK;
     GLenum glMode = mode == RenderColorMaterialMode::Ambient ? GL_AMBIENT : GL_AMBIENT_AND_DIFFUSE;
     glColorMaterial(glFace, glMode);
@@ -447,6 +530,7 @@ void renderColorMaterial(RenderFace face, RenderColorMaterialMode mode)
 
 void renderShadeModel(RenderShadeModel model)
 {
+    VITA_RECORD(PcOpenGlRenderBackend::renderShadeModel(model));
     glShadeModel(model == RenderShadeModel::Smooth ? GL_SMOOTH : GL_FLAT);
 }
 
@@ -478,11 +562,13 @@ void renderClearDepth(double depth)
 
 void renderPolygonOffset(float factor, float units)
 {
+    VITA_RECORD(PcOpenGlRenderBackend::renderPolygonOffset(factor, units));
     glPolygonOffset(factor, units);
 }
 
 void renderLineWidth(float width)
 {
+    VITA_RECORD(PcOpenGlRenderBackend::renderLineWidth(width));
     glLineWidth(width);
 }
 
@@ -540,6 +626,7 @@ void renderFogHint(RenderHintMode mode)
 
 void renderMatrixMode(RenderMatrixMode mode)
 {
+    VITA_RECORD(PcOpenGlRenderBackend::renderMatrixMode(mode));
     switch (mode)
     {
         case RenderMatrixMode::ModelView: glMatrixMode(GL_MODELVIEW); break;
@@ -550,51 +637,108 @@ void renderMatrixMode(RenderMatrixMode mode)
 
 void renderLoadIdentity()
 {
+    VITA_RECORD(PcOpenGlRenderBackend::renderLoadIdentity());
     glLoadIdentity();
 }
 
 void renderPushMatrix()
 {
+    VITA_RECORD(PcOpenGlRenderBackend::renderPushMatrix());
     glPushMatrix();
 }
 
 void renderPopMatrix()
 {
+    VITA_RECORD(PcOpenGlRenderBackend::renderPopMatrix());
     glPopMatrix();
 }
 
 void renderTranslate(float x, float y, float z)
 {
+    VITA_RECORD(PcOpenGlRenderBackend::renderTranslate(x, y, z));
     glTranslatef(x, y, z);
 }
 
 void renderRotate(float angle, float x, float y, float z)
 {
+    VITA_RECORD(PcOpenGlRenderBackend::renderRotate(angle, x, y, z));
     glRotatef(angle, x, y, z);
 }
 
 void renderScale(float x, float y, float z)
 {
+    VITA_RECORD(PcOpenGlRenderBackend::renderScale(x, y, z));
     glScalef(x, y, z);
 }
 
 void renderScaleDouble(double x, double y, double z)
 {
+    VITA_RECORD(PcOpenGlRenderBackend::renderScaleDouble(x, y, z));
     glScaled(x, y, z);
 }
 
 void renderFrustum(double left, double right, double bottom, double top, double nearValue, double farValue)
 {
+    VITA_RECORD(PcOpenGlRenderBackend::renderFrustum(left, right, bottom, top, nearValue, farValue));
     glFrustum(left, right, bottom, top, nearValue, farValue);
 }
 
 void renderOrtho(double left, double right, double bottom, double top, double nearValue, double farValue)
 {
+    VITA_RECORD(PcOpenGlRenderBackend::renderOrtho(left, right, bottom, top, nearValue, farValue));
     glOrtho(left, right, bottom, top, nearValue, farValue);
 }
 
 
 
+#ifdef VITA_PLATFORM
+int renderGenerateDisplayLists(int count)
+{
+    if (count <= 0)
+        return 0;
+    const int first = static_cast<int>(g_vitaLists.size());
+    g_vitaLists.resize(g_vitaLists.size() + static_cast<std::size_t>(count));
+    return first;
+}
+
+void renderDeleteDisplayLists(int first, int count)
+{
+    for (int i = 0; i < count; ++i)
+    {
+        const int list = first + i;
+        if (list > 0 && list < static_cast<int>(g_vitaLists.size()))
+            std::vector<std::function<void()>>().swap(g_vitaLists[static_cast<std::size_t>(list)]);
+    }
+}
+
+void renderBeginDisplayList(int list)
+{
+    if (list <= 0 || list >= static_cast<int>(g_vitaLists.size()))
+        return;
+    g_vitaLists[static_cast<std::size_t>(list)].clear();
+    g_vitaRecording = list;
+}
+
+void renderEndDisplayList()
+{
+    g_vitaRecording = 0;
+}
+
+void renderCallDisplayList(int list)
+{
+    if (list <= 0 || list >= static_cast<int>(g_vitaLists.size()))
+        return;
+    VITA_RECORD(PcOpenGlRenderBackend::renderCallDisplayList(list));
+    for (const std::function<void()>& command : g_vitaLists[static_cast<std::size_t>(list)])
+        command();
+}
+
+void renderCallDisplayLists(int count, const int* lists)
+{
+    for (int i = 0; i < count; ++i)
+        PcOpenGlRenderBackend::renderCallDisplayList(lists[i]);
+}
+#else
 int renderGenerateDisplayLists(int count)
 {
     return static_cast<int>(glGenLists(static_cast<GLsizei>(count)));
@@ -624,6 +768,7 @@ void renderCallDisplayLists(int count, const int* lists)
 {
     glCallLists(static_cast<GLsizei>(count), GL_INT, lists);
 }
+#endif
 
 void renderGenerateOcclusionQueries(int count, int* queries)
 {
@@ -676,10 +821,136 @@ bool renderCopyFramebufferToBoundTexture(int x, int y, int width, int height)
 
 
 
+#ifdef VITA_PLATFORM
+struct VitaBufferedMesh
+{
+    GLuint buffer = 0;
+    RenderInterleavedMesh layout;
+
+    ~VitaBufferedMesh()
+    {
+        if (buffer != 0)
+            glDeleteBuffers(1, &buffer);
+    }
+};
+
+static std::shared_ptr<VitaBufferedMesh> vitaUploadMesh(const RenderCapturedMesh& mesh)
+{
+    if (mesh.empty() || mesh.stride <= 0)
+        return nullptr;
+    std::shared_ptr<VitaBufferedMesh> out = std::make_shared<VitaBufferedMesh>();
+    glGenBuffers(1, &out->buffer);
+    if (out->buffer == 0)
+        return nullptr;
+    glBindBuffer(GL_ARRAY_BUFFER, out->buffer);
+    glBufferData(GL_ARRAY_BUFFER, static_cast<GLsizei>(static_cast<std::size_t>(mesh.vertexCount) * static_cast<std::size_t>(mesh.stride)),
+        mesh.raw.data(), GL_STATIC_DRAW);
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
+    out->layout.stride = mesh.stride;
+    out->layout.count = mesh.vertexCount;
+    out->layout.primitive = mesh.primitive;
+    out->layout.positionShort = mesh.positionShort;
+    out->layout.hasTexture = mesh.hasTexture;
+    out->layout.texCoordOffset = mesh.texCoordOffset;
+    out->layout.hasColor = mesh.hasColor;
+    out->layout.colorOffset = mesh.colorOffset;
+    out->layout.hasNormals = mesh.hasNormals;
+    out->layout.normalOffset = mesh.normalOffset;
+    out->layout.hasBrightness = mesh.hasBrightness;
+    out->layout.brightnessOffset = mesh.brightnessOffset;
+    return out;
+}
+
+static void vitaDrawBufferedMesh(const VitaBufferedMesh& buffered)
+{
+    const RenderInterleavedMesh& mesh = buffered.layout;
+    auto pointerForOffset = [](int offset) -> const void*
+    {
+        return reinterpret_cast<const void*>(static_cast<std::uintptr_t>(offset));
+    };
+
+    glBindBuffer(GL_ARRAY_BUFFER, buffered.buffer);
+    clientActiveTextureCompat(GL_TEXTURE0_ARB);
+    if (mesh.hasTexture)
+    {
+        glTexCoordPointer(2, GL_FLOAT, mesh.stride, pointerForOffset(mesh.texCoordOffset));
+        glEnableClientState(GL_TEXTURE_COORD_ARRAY);
+    }
+    if (mesh.hasBrightness)
+    {
+        clientActiveTextureCompat(GL_TEXTURE1_ARB);
+        glTexCoordPointer(2, GL_SHORT, mesh.stride, pointerForOffset(mesh.brightnessOffset));
+        glEnableClientState(GL_TEXTURE_COORD_ARRAY);
+        clientActiveTextureCompat(GL_TEXTURE0_ARB);
+    }
+    if (mesh.hasColor)
+    {
+        glColorPointer(4, GL_UNSIGNED_BYTE, mesh.stride, pointerForOffset(mesh.colorOffset));
+        glEnableClientState(GL_COLOR_ARRAY);
+    }
+    if (mesh.hasNormals)
+    {
+        glNormalPointer(GL_BYTE, mesh.stride, pointerForOffset(mesh.normalOffset));
+        glEnableClientState(GL_NORMAL_ARRAY);
+    }
+
+    glVertexPointer(3, mesh.positionShort ? GL_SHORT : GL_FLOAT, mesh.stride, pointerForOffset(0));
+    glEnableClientState(GL_VERTEX_ARRAY);
+    glDrawArrays(static_cast<GLenum>(renderPrimitiveValue(mesh.primitive)), 0, mesh.count);
+    glDisableClientState(GL_VERTEX_ARRAY);
+
+    if (mesh.hasTexture)
+        glDisableClientState(GL_TEXTURE_COORD_ARRAY);
+    if (mesh.hasBrightness)
+    {
+        clientActiveTextureCompat(GL_TEXTURE1_ARB);
+        glDisableClientState(GL_TEXTURE_COORD_ARRAY);
+        clientActiveTextureCompat(GL_TEXTURE0_ARB);
+    }
+    if (mesh.hasColor)
+        glDisableClientState(GL_COLOR_ARRAY);
+    if (mesh.hasNormals)
+        glDisableClientState(GL_NORMAL_ARRAY);
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
+
+    glVertexPointer(3, GL_FLOAT, 0, nullptr);
+    if (mesh.hasTexture)
+        glTexCoordPointer(2, GL_FLOAT, 0, nullptr);
+    if (mesh.hasBrightness)
+    {
+        clientActiveTextureCompat(GL_TEXTURE1_ARB);
+        glTexCoordPointer(2, GL_SHORT, 0, nullptr);
+        clientActiveTextureCompat(GL_TEXTURE0_ARB);
+    }
+    if (mesh.hasColor)
+        glColorPointer(4, GL_UNSIGNED_BYTE, 0, nullptr);
+    if (mesh.hasNormals)
+        glNormalPointer(GL_BYTE, 0, nullptr);
+}
+#endif
+
 bool renderDrawInterleaved(const RenderInterleavedMesh& mesh)
 {
     if (mesh.data == nullptr || mesh.stride <= 0 || mesh.count <= 0)
         return false;
+#ifdef VITA_PLATFORM
+    if (g_vitaRecording > 0)
+    {
+        std::shared_ptr<RenderCapturedMesh> captured = std::make_shared<RenderCapturedMesh>();
+        if (!PcOpenGlRenderBackend::renderCaptureInterleaved(mesh, *captured, false))
+            return false;
+        if (captured->hasBrightness)
+        {
+            std::shared_ptr<VitaBufferedMesh> buffered = vitaUploadMesh(*captured);
+            if (!buffered)
+                return false;
+            vitaRecord([buffered] { vitaDrawBufferedMesh(*buffered); });
+            return true;
+        }
+        vitaRecord([captured] { PcOpenGlRenderBackend::renderDrawCaptured(*captured); });
+        return true;
+    }
+#endif
 
     auto pointerForOffset = [&](int offset) -> const void*
     {
@@ -764,6 +1035,22 @@ bool renderCaptureInterleaved(const RenderInterleavedMesh& mesh, RenderCapturedM
 bool renderDrawCaptured(const RenderCapturedMesh& mesh)
 {
     if (mesh.empty()) return false;
+#ifdef VITA_PLATFORM
+    if (g_vitaRecording > 0)
+    {
+        if (mesh.hasBrightness)
+        {
+            std::shared_ptr<VitaBufferedMesh> buffered = vitaUploadMesh(mesh);
+            if (!buffered)
+                return false;
+            vitaRecord([buffered] { vitaDrawBufferedMesh(*buffered); });
+            return true;
+        }
+        std::shared_ptr<RenderCapturedMesh> copy = std::make_shared<RenderCapturedMesh>(mesh);
+        vitaRecord([copy] { PcOpenGlRenderBackend::renderDrawCaptured(*copy); });
+        return true;
+    }
+#endif
     RenderInterleavedMesh view;
     view.data = mesh.raw.data(); view.stride = mesh.stride; view.count = mesh.vertexCount;
     view.primitive = mesh.primitive; view.positionShort = mesh.positionShort;
