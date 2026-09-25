@@ -51,8 +51,13 @@ void decoderThread(std::string path)
     }
 
     const stb_vorbis_info info = stb_vorbis_get_info(vorbis);
+#ifdef VITA_PLATFORM
+    static std::array<float, kDecodeFrames * 2> decoded{};
+    static std::array<float, kDecodeFrames * 2> stereo{};
+#else
     std::array<float, kDecodeFrames * 2> decoded{};
     std::array<float, kDecodeFrames * 2> stereo{};
+#endif
 
     for (;;)
     {
