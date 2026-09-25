@@ -5,6 +5,7 @@
 #include <codecvt>
 
 #include "external/SDLException.h"
+#include "lwjgl/VitaPad.h"
 
 #include "SDL_events.h"
 
@@ -427,6 +428,10 @@ static int keyboard_state_size = 0;
 
 bool isKeyDown(int_t key)
 {
+#ifdef VITA_PLATFORM
+	if (VitaPad::keyDown(keyLWJGLToSDL(key)))
+		return true;
+#endif
 	if (keyboard_state == nullptr)
 	{
 		keyboard_state = SDL_GetKeyboardState(&keyboard_state_size);

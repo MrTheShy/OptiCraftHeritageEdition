@@ -6,6 +6,7 @@
 #include "lwjgl/Display.h"
 
 #include "external/SDLException.h"
+#include "lwjgl/VitaPad.h"
 
 #include "SDL_video.h"
 #include "SDL_mouse.h"
@@ -71,7 +72,11 @@ void pushEvent(const SDL_Event &e)
 			event_queue.emplace(-1, 0, e.motion.x, Display::getHeight() - e.motion.y - 1, e.motion.xrel, -e.motion.yrel, 0);
 			break;
 		case SDL_MOUSEWHEEL:
+#if SDL_VERSION_ATLEAST(2, 26, 0)
 			event_queue.emplace(-1, 0, e.wheel.mouseX, Display::getHeight() - e.wheel.mouseY - 1, 0, 0, e.wheel.y);
+#else
+			event_queue.emplace(-1, 0, event_current.x, event_current.y, 0, 0, e.wheel.y);
+#endif
 			break;
 		case SDL_MOUSEBUTTONDOWN:
 			event_queue.emplace(buttonSDLToLWJGL(e.button.button), 1, e.button.x, Display::getHeight() - e.button.y - 1, 0, 0, 0);
@@ -182,11 +187,18 @@ void clearDeltas()
 bool isButtonDown(int_t button)
 {
 	Uint8 sdlButton = buttonLWJGLToSDL(button);
+#ifdef VITA_PLATFORM
+	if (sdlButton != 0 && VitaPad::mouseButtonDown(sdlButton))
+		return true;
+#endif
 	return sdlButton != 0 && (SDL_GetMouseState(nullptr, nullptr) & SDL_BUTTON(sdlButton)) != 0;
 }
 
 bool isGrabbed()
 {
+#ifdef VITA_PLATFORM
+	return VitaPad::grabbed();
+#endif
 	return SDL_GetRelativeMouseMode() == SDL_TRUE;
 	// return SDL_GetWindowFlags(GLContext::detail::getWindow()) & SDL_WINDOW_MOUSE_CAPTURE;
 	// return SDL_GetWindowGrab(GLContext::detail::getWindow()) == SDL_TRUE;
@@ -194,6 +206,9 @@ bool isGrabbed()
 
 void setGrabbed(bool grabbed)
 {
+#ifdef VITA_PLATFORM
+	VitaPad::setGrabbed(grabbed);
+#endif
 	staging_dx = 0;
 	staging_dy = 0;
 

@@ -6,6 +6,7 @@
 #include "lwjgl/GLContext.h"
 #include "lwjgl/Mouse.h"
 #include "lwjgl/Keyboard.h"
+#include "lwjgl/VitaPad.h"
 
 #include "external/SDLException.h"
 #include "pc/render/PcRenderBackend.h"
@@ -103,6 +104,9 @@ bool isActive()
 
 void processMessages()
 {
+#ifdef VITA_PLATFORM
+	VitaPad::poll();
+#endif
 	SDL_Event e;
 	while (SDL_PollEvent(&e))
 	{
@@ -167,7 +171,11 @@ void update(bool doProcessMessages)
 void create()
 {
 	SDL_ShowWindow(GLContext::detail::getWindow());
+#ifndef VITA_PLATFORM
 	SDL_StartTextInput();
+#else
+	SDL_StopTextInput();
+#endif
 }
 
 int_t getX()
