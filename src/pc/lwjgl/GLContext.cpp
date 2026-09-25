@@ -13,6 +13,9 @@
 #endif
 
 #include "SDL.h"
+#ifdef VITA_PLATFORM
+#include <vitaGL.h>
+#endif
 
 // #define MC_DEBUG_GL
 
@@ -195,8 +198,13 @@ public:
 			SDL_GL_SetAttribute(SDL_GL_MULTISAMPLEBUFFERS, sample > 0 ? 1 : 0);
 			SDL_GL_SetAttribute(SDL_GL_MULTISAMPLESAMPLES, sample);
 
+#ifdef VITA_PLATFORM
+			window = SDL_CreateWindow("OptiCraft", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
+			                          960, 544, SDL_WINDOW_HIDDEN | SDL_WINDOW_OPENGL);
+#else
 			window = SDL_CreateWindow("OptiCraft", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
 			                          854, 480, SDL_WINDOW_HIDDEN | SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE);
+#endif
 			if (window == nullptr)
 				continue;
 
@@ -228,6 +236,9 @@ public:
 			throw std::runtime_error("Failed to load glad");
 
 		SDL_GL_SetSwapInterval(0);
+#ifdef VITA_PLATFORM
+		vglWaitVblankStart(GL_FALSE);
+#endif
 
 		const GLubyte *extensions = renderGetString(RenderStringQuery::Extensions);
 		if (extensions != nullptr)

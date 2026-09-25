@@ -9,12 +9,20 @@ namespace ClientPlatformPolicy
 {
 int initialWidth()
 {
+#ifdef VITA_PLATFORM
+    return 960;
+#else
     return 854;
+#endif
 }
 
 int initialHeight()
 {
+#ifdef VITA_PLATFORM
+    return 544;
+#else
     return 480;
+#endif
 }
 
 std::string minecraftDirectory()
