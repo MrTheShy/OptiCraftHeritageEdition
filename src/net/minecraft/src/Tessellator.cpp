@@ -687,6 +687,10 @@ void Tessellator::addVertex(tess_coord_t d, tess_coord_t d1, tess_coord_t d2)
 			{
 				rawBuffer[rawBufferIndex + 5] = rawBuffer[(rawBufferIndex - j) + 5];
 			}
+			if (hasNormals)
+			{
+				rawBuffer[rawBufferIndex + 6] = rawBuffer[(rawBufferIndex - j) + 6];
+			}
 			if (hasBrightness)
 			{
 				rawBuffer[rawBufferIndex + 7] = rawBuffer[(rawBufferIndex - j) + 7];
