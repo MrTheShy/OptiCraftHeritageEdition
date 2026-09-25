@@ -16,6 +16,15 @@
 #include "lwjgl/GLContext.h"
 #include "pc/render/PcRenderBackend.h"
 
+#ifdef VITA_PLATFORM
+#include <psp2/power.h>
+
+extern "C"
+{
+int _newlib_heap_size_user = 192 * 1024 * 1024;
+}
+#endif
+
 namespace
 {
 std::string trimUsername(std::string value)
@@ -99,6 +108,12 @@ std::string loadUsername()
 
 int main(int argc, char *argv[])
 {
+#ifdef VITA_PLATFORM
+	scePowerSetArmClockFrequency(444);
+	scePowerSetBusClockFrequency(222);
+	scePowerSetGpuClockFrequency(222);
+	scePowerSetGpuXbarClockFrequency(166);
+#endif
 	if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS | SDL_INIT_TIMER | SDL_INIT_AUDIO) < 0)
 		throw SDLException();
 	pcRenderBackendSetRequested(loadRenderBackendPreference());

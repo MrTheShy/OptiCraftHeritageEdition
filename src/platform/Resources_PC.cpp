@@ -8,6 +8,9 @@
 
 std::string PlatformResources::baseDir()
 {
+#ifdef VITA_PLATFORM
+    return "ux0:data/opticraft";
+#endif
     char* base = SDL_GetBasePath();
     if (base)
     {

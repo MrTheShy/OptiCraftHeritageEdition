@@ -28,11 +28,15 @@ static std::string ToPath(const jstring &path)
 {
 	std::string u8path = path;
 
+#ifdef VITA_PLATFORM
+	return u8path;
+#else
 	static char buffer[PATH_MAX];
 	if (!::realpath(u8path.c_str(), buffer))
 		return u8path; // File probably doesn't exist yet, just use the path as-is
 	
 	return std::string(buffer);
+#endif
 }
 
 static jstring FromPath(const std::string &path)
@@ -110,7 +114,9 @@ public:
 		if (::stat(u8path.c_str(), &buffer) != 0)
 			return false;
 		
-	#ifdef __APPLE__
+	#if defined(VITA_PLATFORM)
+		return buffer.st_mtime * 1000LL;
+	#elif defined(__APPLE__)
 		/* Darwin's struct stat names the timespec members st_mtimespec (and only
 		 * macros st_mtime onto it); st_mtim is a glibc/POSIX name that does not
 		 * exist here, so the branches below would not compile on macOS. */
@@ -206,6 +212,9 @@ File *File::open(const File &parent, const jstring &child)
 
 File *File::openResourceDirectory()
 {
+#ifdef VITA_PLATFORM
+	return new File_Impl("ux0:data/opticraft/assets");
+#else
 	// Get the path to the executable
 	char (*path) = (char*)malloc(PATH_MAX);
 	uint32_t length = PATH_MAX;
@@ -235,10 +244,14 @@ File *File::openResourceDirectory()
 	File* file = new File_Impl(u16str.substr(0, pos) + "/assets");
 	free(path);
 	return file;
+#endif
 }
 
 File *File::openWorkingDirectory(const jstring &name)
 {
+#ifdef VITA_PLATFORM
+	return new File_Impl(jstring("ux0:data/opticraft/") + name);
+#endif
 	// Get the home directory environment variable
 	const char *path = ::getenv("HOME");
 	if (path == nullptr)

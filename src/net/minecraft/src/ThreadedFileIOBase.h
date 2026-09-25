@@ -25,6 +25,7 @@ public:
 
 private:
 	ThreadedFileIOBase();
+	void ensureWorker();
 	void run();
 	void processQueue();
 

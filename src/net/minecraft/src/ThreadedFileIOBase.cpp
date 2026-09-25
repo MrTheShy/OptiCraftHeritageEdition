@@ -9,9 +9,17 @@
 ThreadedFileIOBase ThreadedFileIOBase::threadedIOInstance;
 
 ThreadedFileIOBase::ThreadedFileIOBase() :
-	writeQueuedCounter(0), savedIOCounter(0), isThreadWaiting(false), stopping(false),
-	worker(&ThreadedFileIOBase::run, this)
+	writeQueuedCounter(0), savedIOCounter(0), isThreadWaiting(false), stopping(false)
+#ifndef VITA_PLATFORM
+	, worker(&ThreadedFileIOBase::run, this)
+#endif
 {
+}
+
+void ThreadedFileIOBase::ensureWorker()
+{
+	if (!worker.joinable())
+		worker = std::thread(&ThreadedFileIOBase::run, this);
 }
 
 ThreadedFileIOBase::~ThreadedFileIOBase()
@@ -111,6 +119,9 @@ void ThreadedFileIOBase::queueIO(IThreadedFileIO *task)
 		}
 		++writeQueuedCounter;
 		threadedIOQueue.push_back(task);
+#ifdef VITA_PLATFORM
+		ensureWorker();
+#endif
 	}
 	queueCondition.notify_one();
 }
