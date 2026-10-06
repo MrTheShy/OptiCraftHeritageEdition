@@ -496,7 +496,11 @@
 #  define PLATFORM_SHOW_LAGOMETER                      0
 // Vanilla margin: sized for the occlusion-query box the desktop path uses.
 #  define PLATFORM_RENDERER_AABB_MARGIN                6.0f
-#  define PLATFORM_CURSOR_TEXTURE                      0
+#  ifdef VITA_PLATFORM
+#    define PLATFORM_CURSOR_TEXTURE                    1
+#  else
+#    define PLATFORM_CURSOR_TEXTURE                    0
+#  endif
 #  define PLATFORM_CURSOR_SIZE                         16
 #  define PLATFORM_DYNAMIC_TEXTURE_INTERVAL_TICKS      (PLATFORM_PC_LEGACY ? PC_LEGACY_DYNAMIC_TEXTURE_INTERVAL_TICKS : 1)
 #  define PLATFORM_TESSELLATOR_CONVERT_QUADS             1

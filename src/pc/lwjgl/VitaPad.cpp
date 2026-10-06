@@ -104,14 +104,15 @@ Action actionFor(int input, bool inGame, bool pointerMode)
 		switch (input)
 		{
 			case InputCross: return key(SDLK_SPACE);
-			case InputCircle: return key(SDLK_LSHIFT);
-			case InputSquare: return key(SDLK_q);
+			case InputCircle: return key(SDLK_q);
+			case InputSquare: return key(SDLK_e);
 			case InputTriangle: return key(SDLK_e);
 			case InputLTrigger: return mouseButton(SDL_BUTTON_RIGHT);
 			case InputRTrigger: return mouseButton(SDL_BUTTON_LEFT);
 			case InputStart: return key(SDLK_ESCAPE);
 			case InputSelect: return key(SDLK_F3);
 			case InputUp: return key(SDLK_F5);
+			case InputDown: return key(SDLK_LSHIFT);
 			case InputLeft: return wheel(1);
 			case InputRight: return wheel(-1);
 			case InputStickUp: return key(SDLK_w);
