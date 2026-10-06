@@ -1885,6 +1885,219 @@ void RenderGlobal::renderSky(float f)
 	renderDepthMask(true);
 }
 
+#ifdef VITA_PLATFORM
+namespace
+{
+	struct CloudVertex
+	{
+		float x, y, z;
+	};
+
+	std::vector<unsigned char> cloudMask;
+	int cloudMaskSize = 0;
+	float cloudPieceSize = 1.0f;
+	float cloudSplitRange = 0.0f;
+
+	bool loadCloudMask(RenderEngine *renderEngine)
+	{
+		if (cloudMaskSize > 0)
+			return true;
+
+		const std::vector<int_t> pixels = renderEngine->readTextureImageData("/environment/clouds.png");
+		const int size = static_cast<int>(std::sqrt(static_cast<double>(pixels.size())));
+		if (size <= 0 || static_cast<std::size_t>(size) * size != pixels.size())
+			return false;
+
+		cloudMask.resize(pixels.size());
+		for (std::size_t i = 0; i < pixels.size(); i++)
+			cloudMask[i] = ((static_cast<unsigned int>(pixels[i]) >> 24) & 0xFF) > 25 ? 1 : 0;
+		cloudMaskSize = size;
+		return true;
+	}
+
+	bool isCloud(int x, int z)
+	{
+		const int n = cloudMaskSize;
+		x %= n;
+		z %= n;
+		if (x < 0)
+			x += n;
+		if (z < 0)
+			z += n;
+		return cloudMask[z * n + x] != 0;
+	}
+
+	CloudVertex cloudLerp(const CloudVertex &a, const CloudVertex &b, float t)
+	{
+		CloudVertex c;
+		c.x = a.x + (b.x - a.x) * t;
+		c.y = a.y + (b.y - a.y) * t;
+		c.z = a.z + (b.z - a.z) * t;
+		return c;
+	}
+
+	float cloudSpan(const CloudVertex &a, const CloudVertex &b)
+	{
+		return std::max(std::fabs(b.x - a.x), std::max(std::fabs(b.y - a.y), std::fabs(b.z - a.z)));
+	}
+
+	void cloudQuad(Tessellator *tessellator, const CloudVertex &a, const CloudVertex &b, const CloudVertex &c, const CloudVertex &d)
+	{
+		const float minX = std::min(std::min(a.x, b.x), std::min(c.x, d.x));
+		const float maxX = std::max(std::max(a.x, b.x), std::max(c.x, d.x));
+		const float minZ = std::min(std::min(a.z, b.z), std::min(c.z, d.z));
+		const float maxZ = std::max(std::max(a.z, b.z), std::max(c.z, d.z));
+		const float dx = minX > 0.0f ? minX : (maxX < 0.0f ? -maxX : 0.0f);
+		const float dz = minZ > 0.0f ? minZ : (maxZ < 0.0f ? -maxZ : 0.0f);
+
+		int stepsS = 1;
+		int stepsT = 1;
+		if (std::max(dx, dz) < cloudSplitRange)
+		{
+			stepsS = std::min(16, std::max(1, static_cast<int>(std::ceil(cloudSpan(a, b) / cloudPieceSize))));
+			stepsT = std::min(16, std::max(1, static_cast<int>(std::ceil(cloudSpan(b, c) / cloudPieceSize))));
+		}
+
+		for (int t = 0; t < stepsT; t++)
+		{
+			const float t0 = static_cast<float>(t) / stepsT;
+			const float t1 = static_cast<float>(t + 1) / stepsT;
+			for (int s = 0; s < stepsS; s++)
+			{
+				const float s0 = static_cast<float>(s) / stepsS;
+				const float s1 = static_cast<float>(s + 1) / stepsS;
+				const CloudVertex p[4] = {
+					cloudLerp(cloudLerp(a, b, s0), cloudLerp(d, c, s0), t0),
+					cloudLerp(cloudLerp(a, b, s1), cloudLerp(d, c, s1), t0),
+					cloudLerp(cloudLerp(a, b, s1), cloudLerp(d, c, s1), t1),
+					cloudLerp(cloudLerp(a, b, s0), cloudLerp(d, c, s0), t1),
+				};
+				for (int i = 0; i < 4; i++)
+					tessellator->addVertex(p[i].x, p[i].y, p[i].z);
+			}
+		}
+	}
+
+	void cloudFlat(Tessellator *tessellator, double originX, double originZ, float y, double cell, int range)
+	{
+		const int x0 = static_cast<int>(std::floor((originX - range) / cell));
+		const int x1 = static_cast<int>(std::floor((originX + range) / cell));
+		const int z0 = static_cast<int>(std::floor((originZ - range) / cell));
+		const int z1 = static_cast<int>(std::floor((originZ + range) / cell));
+
+		for (int tz = z0; tz <= z1; tz++)
+		{
+			const float za = static_cast<float>(tz * cell - originZ);
+			const float zb = static_cast<float>((tz + 1) * cell - originZ);
+			for (int tx = x0; tx <= x1; tx++)
+			{
+				if (!isCloud(tx, tz))
+					continue;
+				int end = tx;
+				while (end < x1 && isCloud(end + 1, tz))
+					end++;
+				const float xa = static_cast<float>(tx * cell - originX);
+				const float xb = static_cast<float>((end + 1) * cell - originX);
+				cloudQuad(tessellator, {xa, y, zb}, {xb, y, zb}, {xb, y, za}, {xa, y, za});
+				tx = end;
+			}
+		}
+	}
+
+	struct CloudColors
+	{
+		float bottom[3];
+		float top[3];
+		float sideX[3];
+		float sideZ[3];
+	};
+
+	void cloudBoxes(Tessellator *tessellator, double originX, double originZ, float y, float height, float inset,
+		double cell, int range, const CloudColors &colors)
+	{
+		const int x0 = static_cast<int>(std::floor((originX - range) / cell));
+		const int x1 = static_cast<int>(std::floor((originX + range) / cell));
+		const int z0 = static_cast<int>(std::floor((originZ - range) / cell));
+		const int z1 = static_cast<int>(std::floor((originZ + range) / cell));
+		const float top = y + height;
+		const bool drawBottom = y > -height - 1.0f;
+		const bool drawTop = y <= height + 1.0f;
+
+		for (int pass = 0; pass < 2; pass++)
+		{
+			const bool bottom = pass == 0;
+			if ((bottom && !drawBottom) || (!bottom && !drawTop))
+				continue;
+			const float *color = bottom ? colors.bottom : colors.top;
+			const float fy = bottom ? y : top - inset;
+			tessellator->setColorRGBA_F(color[0], color[1], color[2], 0.8f);
+			tessellator->setNormal(0.0f, bottom ? -1.0f : 1.0f, 0.0f);
+			for (int tz = z0; tz <= z1; tz++)
+			{
+				const float za = static_cast<float>(tz * cell - originZ);
+				const float zb = static_cast<float>((tz + 1) * cell - originZ);
+				for (int tx = x0; tx <= x1; tx++)
+				{
+					if (!isCloud(tx, tz))
+						continue;
+					int end = tx;
+					while (end < x1 && isCloud(end + 1, tz))
+						end++;
+					const float xa = static_cast<float>(tx * cell - originX);
+					const float xb = static_cast<float>((end + 1) * cell - originX);
+					cloudQuad(tessellator, {xa, fy, zb}, {xb, fy, zb}, {xb, fy, za}, {xa, fy, za});
+					tx = end;
+				}
+			}
+		}
+
+		tessellator->setColorRGBA_F(colors.sideX[0], colors.sideX[1], colors.sideX[2], 0.8f);
+		for (int side = -1; side <= 1; side += 2)
+		{
+			tessellator->setNormal(static_cast<float>(side), 0.0f, 0.0f);
+			for (int tx = x0; tx <= x1; tx++)
+			{
+				const float fx = static_cast<float>((side < 0 ? tx : tx + 1) * cell - originX) - (side > 0 ? inset : 0.0f);
+				for (int tz = z0; tz <= z1; tz++)
+				{
+					if (!isCloud(tx, tz) || isCloud(tx + side, tz))
+						continue;
+					int end = tz;
+					while (end < z1 && isCloud(tx, end + 1) && !isCloud(tx + side, end + 1))
+						end++;
+					const float za = static_cast<float>(tz * cell - originZ);
+					const float zb = static_cast<float>((end + 1) * cell - originZ);
+					cloudQuad(tessellator, {fx, y, zb}, {fx, top, zb}, {fx, top, za}, {fx, y, za});
+					tz = end;
+				}
+			}
+		}
+
+		tessellator->setColorRGBA_F(colors.sideZ[0], colors.sideZ[1], colors.sideZ[2], 0.8f);
+		for (int side = -1; side <= 1; side += 2)
+		{
+			tessellator->setNormal(0.0f, 0.0f, static_cast<float>(side));
+			for (int tz = z0; tz <= z1; tz++)
+			{
+				const float fz = static_cast<float>((side < 0 ? tz : tz + 1) * cell - originZ) - (side > 0 ? inset : 0.0f);
+				for (int tx = x0; tx <= x1; tx++)
+				{
+					if (!isCloud(tx, tz) || isCloud(tx, tz + side))
+						continue;
+					int end = tx;
+					while (end < x1 && isCloud(end + 1, tz) && !isCloud(end + 1, tz + side))
+						end++;
+					const float xa = static_cast<float>(tx * cell - originX);
+					const float xb = static_cast<float>((end + 1) * cell - originX);
+					cloudQuad(tessellator, {xa, top, fz}, {xb, top, fz}, {xb, y, fz}, {xa, y, fz});
+					tx = end;
+				}
+			}
+		}
+	}
+}
+#endif
+
 void RenderGlobal::renderClouds(float f)
 {
 	if (!mc->theWorld->worldProvider->func_48217_e())
@@ -1945,6 +2158,25 @@ void RenderGlobal::renderClouds(float f)
 	const tess_coord_t cloudLocalZ = static_cast<tess_coord_t>(d1);
 	float f10 = static_cast<float>(cloudLocalX * static_cast<tess_coord_t>(f6));
 	float f11 = static_cast<float>(cloudLocalZ * static_cast<tess_coord_t>(f6));
+
+#ifdef VITA_PLATFORM
+	if (loadCloudMask(renderEngine))
+	{
+		cloudPieceSize = 8.0f;
+		cloudSplitRange = 64.0f;
+		renderDisable(RenderCapability::Texture2D);
+		tessellator->startDrawingQuads();
+		tessellator->setColorRGBA_F(f2, f3, f4, 0.8f);
+		cloudFlat(tessellator, d, d1, f9, 2048.0 / cloudMaskSize, byte0 * i);
+		tessellator->draw();
+		renderEnable(RenderCapability::Texture2D);
+
+		renderColor4f(1.0f, 1.0f, 1.0f, 1.0f);
+		renderDisable(RenderCapability::Blend);
+		renderEnable(RenderCapability::CullFace);
+		return;
+	}
+#endif
 
 	tessellator->startDrawingQuads();
 	tessellator->setColorRGBA_F(f2, f3, f4, 0.8f);
@@ -2054,6 +2286,37 @@ void RenderGlobal::renderCloudsFancy(float f)
 	float f16 = 0.0009765625f;
 
 	renderScale(f2, 1.0f, f2);
+
+#ifdef VITA_PLATFORM
+	if (loadCloudMask(renderEngine))
+	{
+		const CloudColors colors = {
+			{cloudBottomRed, cloudBottomGreen, cloudBottomBlue},
+			{cloudTopRed, cloudTopGreen, cloudTopBlue},
+			{cloudSideXRed, cloudSideXGreen, cloudSideXBlue},
+			{cloudSideZRed, cloudSideZGreen, cloudSideZBlue},
+		};
+		cloudPieceSize = 1.0f;
+		cloudSplitRange = 6.0f;
+		renderDisable(RenderCapability::Texture2D);
+		for (int_t l = 0; l < 2; l++)
+		{
+			if (l == 0)
+				renderColorMask(false, false, false, false);
+			else
+				renderColorMask(true, true, true, true);
+			tessellator->startDrawingQuads();
+			cloudBoxes(tessellator, d, d1, f4, f3, f16, 256.0 / cloudMaskSize, byte0 * k, colors);
+			tessellator->draw();
+		}
+		renderEnable(RenderCapability::Texture2D);
+
+		renderColor4f(1.0f, 1.0f, 1.0f, 1.0f);
+		renderDisable(RenderCapability::Blend);
+		renderEnable(RenderCapability::CullFace);
+		return;
+	}
+#endif
 
 	for (int_t l = 0; l < 2; l++)
 	{

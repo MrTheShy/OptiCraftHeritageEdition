@@ -968,6 +968,11 @@ void EntityRenderer::orientCamera(float partialTicks)
 void EntityRenderer::setupCameraTransform(float partialTicks, int anaglyphPass)
 {
     farPlaneDistance = static_cast<float>(Config::getRenderDistanceFine());
+#ifdef VITA_PLATFORM
+    const float projectionFar = std::max(farPlaneDistance * 2.0f, 256.0f);
+#else
+    const float projectionFar = farPlaneDistance * 2.0f;
+#endif
     // [WII 16:9] ConsoleAspectRatio calcula la relación de aspecto anamórfica exacta según mc->gameSettings->widescreen
     // para proyectar el mundo cúbico sin estiramiento horizontal en televisores 16:9 con señal EFB 640x480.
 #if PLATFORM_FLOAT_VERTEX_MATH
@@ -995,13 +1000,13 @@ void EntityRenderer::setupCameraTransform(float partialTicks, int anaglyphPass)
         
         perspectiveGL(getFOVModifier(partialTicks, true),
                       projectionAspect,
-                      PLATFORM_NEAR_PLANE, farPlaneDistance * 2.0f);
+                      PLATFORM_NEAR_PLANE, projectionFar);
     }
     else
     {
         perspectiveGL(getFOVModifier(partialTicks, true),
                       projectionAspect,
-                      PLATFORM_NEAR_PLANE, farPlaneDistance * 2.0f);
+                      PLATFORM_NEAR_PLANE, projectionFar);
     }
     
     if (mc->playerController != nullptr && mc->playerController->func_35643_e())
@@ -1541,7 +1546,12 @@ void EntityRenderer::renderWorld(float partialTicks, int64_t renderTimeLimitNano
         ClippingHelperImpl::getInstance();
         
         // Renderizar cielo (solo en distancias cortas)
-        if (mc->gameSettings->renderDistance < 2)
+#ifdef VITA_PLATFORM
+        const bool drawSky = true;
+#else
+        const bool drawSky = mc->gameSettings->renderDistance < 2;
+#endif
+        if (drawSky)
         {
             setupFog(-1, partialTicks);
 #if PLATFORM_PROFILE_RENDER_PHASES
