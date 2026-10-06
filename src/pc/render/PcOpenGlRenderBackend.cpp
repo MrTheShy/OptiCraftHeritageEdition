@@ -939,15 +939,10 @@ bool renderDrawInterleaved(const RenderInterleavedMesh& mesh)
         std::shared_ptr<RenderCapturedMesh> captured = std::make_shared<RenderCapturedMesh>();
         if (!PcOpenGlRenderBackend::renderCaptureInterleaved(mesh, *captured, false))
             return false;
-        if (captured->hasBrightness)
-        {
-            std::shared_ptr<VitaBufferedMesh> buffered = vitaUploadMesh(*captured);
-            if (!buffered)
-                return false;
-            vitaRecord([buffered] { vitaDrawBufferedMesh(*buffered); });
-            return true;
-        }
-        vitaRecord([captured] { PcOpenGlRenderBackend::renderDrawCaptured(*captured); });
+        std::shared_ptr<VitaBufferedMesh> buffered = vitaUploadMesh(*captured);
+        if (!buffered)
+            return false;
+        vitaRecord([buffered] { vitaDrawBufferedMesh(*buffered); });
         return true;
     }
 #endif
@@ -1038,16 +1033,10 @@ bool renderDrawCaptured(const RenderCapturedMesh& mesh)
 #ifdef VITA_PLATFORM
     if (g_vitaRecording > 0)
     {
-        if (mesh.hasBrightness)
-        {
-            std::shared_ptr<VitaBufferedMesh> buffered = vitaUploadMesh(mesh);
-            if (!buffered)
-                return false;
-            vitaRecord([buffered] { vitaDrawBufferedMesh(*buffered); });
-            return true;
-        }
-        std::shared_ptr<RenderCapturedMesh> copy = std::make_shared<RenderCapturedMesh>(mesh);
-        vitaRecord([copy] { PcOpenGlRenderBackend::renderDrawCaptured(*copy); });
+        std::shared_ptr<VitaBufferedMesh> buffered = vitaUploadMesh(mesh);
+        if (!buffered)
+            return false;
+        vitaRecord([buffered] { vitaDrawBufferedMesh(*buffered); });
         return true;
     }
 #endif
