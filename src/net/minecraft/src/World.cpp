@@ -3,6 +3,9 @@
 #include "platform/WorldLoadTrace.h"
 #include "platform/Diagnostics.h"
 #include "platform/PlatformTuning.h"
+#if PLATFORM_PS2
+#include "ps2/diagnostics/Ps2OptimizationValidation.h"
+#endif
 #if PLATFORM_PC_LEGACY
 #include "pc/world/PcLegacyTickScheduler.h"
 #endif
@@ -109,28 +112,62 @@
 #endif
 #include "platform/world/StreamingFrameBudget.h"
 
-#if PLATFORM_BOUNDED_WORLD
+static bool isSafeSpawnBlock(int_t blockId)
+{
+    if (blockId <= 0 || blockId >= Block::BLOCK_REGISTRY_SIZE)
+        return false;
+    Block *block = Block::blocksList[blockId];
+    if (block == nullptr || block->blockMaterial == nullptr)
+        return false;
+    if (!block->blockMaterial->getIsSolid())
+        return false;
+    if (block->blockMaterial->getIsLiquid())
+        return false;
+    if (blockId == Block::ice->blockID || blockId == Block::cactus->blockID)
+        return false;
+    return true;
+}
+
+static bool isPassableAir(int_t blockId)
+{
+    if (blockId <= 0 || blockId >= Block::BLOCK_REGISTRY_SIZE)
+        return true;
+    Block *block = Block::blocksList[blockId];
+    if (block == nullptr || block->blockMaterial == nullptr)
+        return true;
+    if (block->blockMaterial->getIsSolid() || block->blockMaterial->getIsLiquid())
+        return false;
+    return true;
+}
+
 static int_t platformFindTopSpawnBlockY(World *world, int_t x, int_t z)
 {
-    // Find the highest solid block at the chosen spawn column. Vanilla Beta
-    // keeps SpawnY around 64 and lets the player fall/resolve collision, but a
-    // bounded chunk cache can delay player ticking. A resolved surface Y
-    // prevents the player from appearing far above the terrain while the world
-    // finishes loading.
-    for (int_t y = WorldHeight::MAX_Y; y >= 0; --y)
+    for (int_t y = WorldHeight::MAX_Y - 2; y >= 63; --y)
     {
         int_t id = world->getBlockId(x, y, z);
-        if (id <= 0)
+        if (!isSafeSpawnBlock(id))
             continue;
 
-        Block *block = Block::blocksList[id];
-        if (block != nullptr && block->blockMaterial != nullptr && block->blockMaterial->getIsSolid())
+        int_t feetId = world->getBlockId(x, y + 1, z);
+        int_t headId = world->getBlockId(x, y + 2, z);
+        if (isPassableAir(feetId) && isPassableAir(headId))
+            return y;
+    }
+
+    for (int_t y = 62; y >= 1; --y)
+    {
+        int_t id = world->getBlockId(x, y, z);
+        if (!isSafeSpawnBlock(id))
+            continue;
+
+        int_t feetId = world->getBlockId(x, y + 1, z);
+        int_t headId = world->getBlockId(x, y + 2, z);
+        if (isPassableAir(feetId) && isPassableAir(headId))
             return y;
     }
 
     return 64;
 }
-#endif
 
 // Static initialization
 int World::lightingUpdatesScheduled = 0;
@@ -161,6 +198,8 @@ static bool isActiveClientEntity(Entity *entity)
     Minecraft *mc = Minecraft::getMinecraft();
     return mc != nullptr &&
            (static_cast<void *>(mc->thePlayer) == static_cast<void *>(entity) ||
+            static_cast<void *>(mc->thePlayerOne) == static_cast<void *>(entity) ||
+            static_cast<void *>(mc->thePlayer2) == static_cast<void *>(entity) ||
             static_cast<void *>(mc->renderViewEntity) == static_cast<void *>(entity));
 }
 
@@ -607,24 +646,48 @@ void World::generateSpawnPoint()
     findingSpawnPoint = true;
     WORLD_LOAD_STAGE("generateSpawnPoint");
 
-#if PLATFORM_BOUNDED_WORLD
-    // Bounded console generators cannot afford vanilla's up-to-1000 synchronous
-    // chunk probes.  Keep the 1.2.5 biome-guided initial position, but cap the
-    // coordinate probes and resolve a safe local surface Y.
-#endif
     WorldChunkManager *manager = worldProvider->worldChunkMgr;
     std::vector<BiomeGenBase *> &spawnBiomes = manager->getBiomesToSpawnIn();
     Random spawnRandom(getSeed());
     WorldLoadTrace::step("findBiomePosition");
-#if defined(PS2_PLATFORM)
-    ChunkPosition *position = manager->findBiomePosition(0, 0, 64, spawnBiomes, spawnRandom);
-#else
-    ChunkPosition *position = manager->findBiomePosition(0, 0, 256, spawnBiomes, spawnRandom);
-#endif
 
-    int_t spawnX = 0;
+    int_t worldSizeType = (worldInfo != nullptr) ? worldInfo->getWorldSizeType() : 0;
+    int_t searchRadius = 64;
+    int_t maxOffset = 48;
+    int_t minChunk = -8;
+    int_t maxChunk = 7;
+
+    if (worldSizeType == 1) // 256x256
+    {
+        searchRadius = 48;
+        maxOffset = 40;
+        minChunk = -5;
+        maxChunk = 4;
+    }
+    else if (worldSizeType == 2) // 864x864
+    {
+        searchRadius = 128;
+        maxOffset = 180;
+        minChunk = -20;
+        maxChunk = 19;
+    }
+    else // Infinite
+    {
+        searchRadius = 256;
+        maxOffset = 192;
+        minChunk = -200;
+        maxChunk = 200;
+    }
+
+    // Seed-based randomized search origin to vary spawn points across worlds
+    int_t centerSearchX = spawnRandom.nextInt(maxOffset * 2 + 1) - maxOffset;
+    int_t centerSearchZ = spawnRandom.nextInt(maxOffset * 2 + 1) - maxOffset;
+
+    ChunkPosition *position = manager->findBiomePosition(centerSearchX, centerSearchZ, searchRadius, spawnBiomes, spawnRandom);
+
+    int_t spawnX = centerSearchX;
     int_t spawnY = worldProvider->getAverageGroundLevel();
-    int_t spawnZ = 0;
+    int_t spawnZ = centerSearchZ;
     if (position != nullptr)
     {
         spawnX = position->x;
@@ -632,89 +695,106 @@ void World::generateSpawnPoint()
         delete position;
     }
 
-#if defined(PS2_PLATFORM)
-    // Hardware PS2 cannot afford vanilla's synchronous spawn probing here.
-    // Every canCoordinateBeSpawn() can force another complete chunk generation
-    // before the loading screen is visible. Generate only the biome-guided
-    // candidate chunk and find the best spawn column inside that same 16x16.
-    WorldLoadTrace::step("spawnCandidateChunk");
-    const int_t spawnChunkX = JavaArithmetic::intShr(spawnX, 4);
-    const int_t spawnChunkZ = JavaArithmetic::intShr(spawnZ, 4);
-    const int_t chunkWorldX = JavaArithmetic::intShl(spawnChunkX, 4);
-    const int_t chunkWorldZ = JavaArithmetic::intShl(spawnChunkZ, 4);
-    const int_t startLocalX = spawnX & 15;
-    const int_t startLocalZ = spawnZ & 15;
+    // Clamp candidate to safe inner region for limited worlds
+    int_t candidateChunkX = JavaArithmetic::intShr(spawnX, 4);
+    int_t candidateChunkZ = JavaArithmetic::intShr(spawnZ, 4);
+    if (candidateChunkX < minChunk) candidateChunkX = minChunk;
+    else if (candidateChunkX > maxChunk) candidateChunkX = maxChunk;
+    if (candidateChunkZ < minChunk) candidateChunkZ = minChunk;
+    else if (candidateChunkZ > maxChunk) candidateChunkZ = maxChunk;
 
-    platformHardwareCheckpoint("before spawn candidate chunk");
-    Chunk *spawnChunk = getChunkFromChunkCoords(spawnChunkX, spawnChunkZ);
-    platformHardwareCheckpoint("after spawn candidate chunk");
-    if (spawnChunk != nullptr)
+    WorldLoadTrace::step("scanSafeSpawnChunk");
+
+    // Spiral search across candidate chunks (up to 9 chunks: center + 8 neighbors)
+    // to find safe, dry, non-suffocating ground with chunk-centered coordinates
+    static const int_t spiralOffsets[9][2] = {
+        {0, 0}, {1, 0}, {0, 1}, {-1, 0}, {0, -1},
+        {1, 1}, {-1, 1}, {-1, -1}, {1, -1}
+    };
+
+    bool foundSafeSpawn = false;
+    int_t bestGrassX = 0, bestGrassY = -1, bestGrassZ = 0;
+    int_t bestSolidX = 0, bestSolidY = -1, bestSolidZ = 0;
+
+    for (int_t chunkStep = 0; chunkStep < 9 && !foundSafeSpawn; ++chunkStep)
     {
-        bool foundGrass = false;
-        int_t fallbackLocalX = startLocalX;
-        int_t fallbackLocalZ = startLocalZ;
-        int_t fallbackY = -1;
+        const int_t curChunkX = candidateChunkX + spiralOffsets[chunkStep][0];
+        const int_t curChunkZ = candidateChunkZ + spiralOffsets[chunkStep][1];
 
-        WorldLoadTrace::step("scanSpawnChunk");
-        for (int_t dz = 0; dz < 16 && !foundGrass; ++dz)
+        if (curChunkX < minChunk || curChunkX > maxChunk ||
+            curChunkZ < minChunk || curChunkZ > maxChunk)
+            continue;
+
+        Chunk *chunk = getChunkFromChunkCoords(curChunkX, curChunkZ);
+        if (chunk == nullptr)
+            continue;
+
+        const int_t chunkWorldX = JavaArithmetic::intShl(curChunkX, 4);
+        const int_t chunkWorldZ = JavaArithmetic::intShl(curChunkZ, 4);
+
+        // Scan interior columns centered in the chunk (local 4 to 12)
+        // Starting at (8, 8) to avoid chunk seams and dirty cascades
+        static const int_t interiorCoords[9] = {8, 7, 9, 6, 10, 5, 11, 4, 12};
+
+        for (int_t zi = 0; zi < 9 && !foundSafeSpawn; ++zi)
         {
-            const int_t localZ = (startLocalZ + dz) & 15;
-            for (int_t dx = 0; dx < 16; ++dx)
+            const int_t localZ = interiorCoords[zi];
+            for (int_t xi = 0; xi < 9; ++xi)
             {
-                const int_t localX = (startLocalX + dx) & 15;
-                const int_t surfaceY = spawnChunk->getHeightValue(localX, localZ) - 1;
-                if (surfaceY < 0 || surfaceY >= WorldHeight::HEIGHT)
+                const int_t localX = interiorCoords[xi];
+                const int_t surfaceY = chunk->getHeightValue(localX, localZ) - 1;
+                if (surfaceY < 60 || surfaceY >= WorldHeight::HEIGHT - 2)
                     continue;
 
-                const int_t blockId = spawnChunk->getBlockID(localX, surfaceY, localZ);
-                if (blockId <= 0 || blockId >= Block::BLOCK_REGISTRY_SIZE)
+                const int_t blockId = chunk->getBlockID(localX, surfaceY, localZ);
+                if (!isSafeSpawnBlock(blockId))
                     continue;
 
-                Block *block = Block::blocksList[blockId];
-                if (fallbackY < 0 && block != nullptr && block->blockMaterial != nullptr &&
-                    block->blockMaterial->getIsSolid())
-                {
-                    fallbackLocalX = localX;
-                    fallbackLocalZ = localZ;
-                    fallbackY = surfaceY;
-                }
+                const int_t feetId = chunk->getBlockID(localX, surfaceY + 1, localZ);
+                const int_t headId = chunk->getBlockID(localX, surfaceY + 2, localZ);
+                if (!isPassableAir(feetId) || !isPassableAir(headId))
+                    continue;
 
-                if (blockId == Block::grass->blockID)
+                const int_t worldX = chunkWorldX + localX;
+                const int_t worldZ = chunkWorldZ + localZ;
+
+                if (blockId == Block::grass->blockID && surfaceY >= 63)
                 {
-                    spawnX = JavaArithmetic::intAdd(chunkWorldX, localX);
-                    spawnZ = JavaArithmetic::intAdd(chunkWorldZ, localZ);
-                    spawnY = surfaceY;
-                    foundGrass = true;
+                    bestGrassX = worldX;
+                    bestGrassY = surfaceY;
+                    bestGrassZ = worldZ;
+                    foundSafeSpawn = true;
                     break;
+                }
+                else if (bestSolidY < 0 && surfaceY >= 63)
+                {
+                    bestSolidX = worldX;
+                    bestSolidY = surfaceY;
+                    bestSolidZ = worldZ;
                 }
             }
         }
+    }
 
-        if (!foundGrass && fallbackY >= 0)
-        {
-            spawnX = JavaArithmetic::intAdd(chunkWorldX, fallbackLocalX);
-            spawnZ = JavaArithmetic::intAdd(chunkWorldZ, fallbackLocalZ);
-            spawnY = fallbackY;
-        }
-    }
-#elif PLATFORM_BOUNDED_WORLD
-    WorldLoadTrace::step("canCoordinateBeSpawn");
-    for (int_t attempts = 0; attempts < 8 && !worldProvider->canCoordinateBeSpawn(spawnX, spawnZ); ++attempts)
+    if (foundSafeSpawn)
     {
-		MC_LOG_DEBUG("world", "spawn probe %d at %d,%d\n", (int)attempts, (int)spawnX, (int)spawnZ);
-		spawnX = JavaArithmetic::intAdd(spawnX, spawnRandom.nextIntDifference(64));
-		spawnZ = JavaArithmetic::intAdd(spawnZ, spawnRandom.nextIntDifference(64));
+        spawnX = bestGrassX;
+        spawnY = bestGrassY;
+        spawnZ = bestGrassZ;
     }
-    WorldLoadTrace::step("findTopSpawnBlockY");
-    spawnY = platformFindTopSpawnBlockY(this, spawnX, spawnZ);
-#else
-    WorldLoadTrace::step("canCoordinateBeSpawn");
-    for (int_t attempts = 0; attempts < 1000 && !worldProvider->canCoordinateBeSpawn(spawnX, spawnZ); ++attempts)
+    else if (bestSolidY >= 0)
     {
-		spawnX = JavaArithmetic::intAdd(spawnX, spawnRandom.nextIntDifference(64));
-		spawnZ = JavaArithmetic::intAdd(spawnZ, spawnRandom.nextIntDifference(64));
+        spawnX = bestSolidX;
+        spawnY = bestSolidY;
+        spawnZ = bestSolidZ;
     }
-#endif
+    else
+    {
+        // Ultimate fallback: center of candidate chunk at ground level
+        spawnX = JavaArithmetic::intShl(candidateChunkX, 4) + 8;
+        spawnZ = JavaArithmetic::intShl(candidateChunkZ, 4) + 8;
+        spawnY = platformFindTopSpawnBlockY(this, spawnX, spawnZ);
+    }
 
     worldInfo->setSpawn(spawnX, spawnY, spawnZ);
     findingSpawnPoint = false;
@@ -749,9 +829,7 @@ void World::setSpawnLocation()
             break;
     }
 
-#if PLATFORM_BOUNDED_WORLD
     worldInfo->setSpawnY(platformFindTopSpawnBlockY(this, x, z));
-#endif
     
     worldInfo->setSpawnX(x);
     worldInfo->setSpawnZ(z);
@@ -1058,9 +1136,14 @@ bool World::isChunkRequiredByRetainedEntity(int_t chunkX, int_t chunkZ) const
         if (entity == nullptr || entity->isDead || entity->getChunkRetentionRadius() < 0)
             continue;
 
-        const int_t entityChunkX = MathHelper::floor_double(entity->posX / 16.0);
-        const int_t entityChunkZ = MathHelper::floor_double(entity->posZ / 16.0);
-        if (chunkX == entityChunkX && chunkZ == entityChunkZ)
+        // The whole retention square, not just the entity's own chunk: an
+        // entity only ticks when the chunks PLATFORM_PLAYER_UPDATE_CHUNK_RANGE_BLOCKS
+        // around it exist, so the ender dragon froze whenever its neighbours
+        // were missing.
+        const int_t radius = entity->getChunkRetentionRadius();
+        const long_t dx = static_cast<long_t>(chunkX) - static_cast<long_t>(MathHelper::floor_double(entity->posX / 16.0));
+        const long_t dz = static_cast<long_t>(chunkZ) - static_cast<long_t>(MathHelper::floor_double(entity->posZ / 16.0));
+        if (dx >= -radius && dx <= radius && dz >= -radius && dz <= radius)
             return true;
     }
 #else
@@ -2557,6 +2640,8 @@ MovingObjectPosition *World::rayTraceBlocks_do_do(Vec3D *start, Vec3D *end, bool
 
 void World::playSoundAtEntity(Entity* entity, const jstring& soundName, float volume, float pitch)
 {
+    if (entity == nullptr)
+        return;
     for (size_t i = 0; i < worldAccesses.size(); i++)
     {
         worldAccesses[i]->playSound(soundName, entity->posX, entity->posY - (double)entity->yOffset, entity->posZ, volume, pitch);
@@ -3379,11 +3464,13 @@ void World::updateEntities()
         
         if (!entity->isDead)
         {
-#if PLATFORM_PS2 && MC_LOG_LEVEL > 2
+#if PLATFORM_PS2 && MC_LOG_LEVEL >= 2
             const std::uint32_t entityTickStart = platformProfileRenderPhaseBegin();
 #endif
             updateEntity(entity);
-#if PLATFORM_PS2 && MC_LOG_LEVEL > 2
+#if PLATFORM_PS2 && MC_LOG_LEVEL == 2
+            platformProfileEntityTickWork(entityTickStart, entity);
+#elif PLATFORM_PS2 && MC_LOG_LEVEL > 2
             platformProfileEntityTick(entityTickStart, entity);
 #endif
         }
@@ -3522,10 +3609,19 @@ void World::ensureEntityChunkRetention(Entity *entity)
     if (entity == nullptr || entity->isDead || entity->getChunkRetentionRadius() < 0)
         return;
 
+    // Load the entity's chunk and its retention neighbours (3x3 for the
+    // dragon) so it can keep ticking; see isChunkRequiredByRetainedEntity.
+    const int_t radius = entity->getChunkRetentionRadius();
     const int_t chunkX = MathHelper::floor_double(entity->posX / 16.0);
     const int_t chunkZ = MathHelper::floor_double(entity->posZ / 16.0);
-    if (!chunkExists(chunkX, chunkZ))
-        getChunkFromChunkCoords(chunkX, chunkZ);
+    for (int_t dx = -radius; dx <= radius; ++dx)
+    {
+        for (int_t dz = -radius; dz <= radius; ++dz)
+        {
+            if (!chunkExists(chunkX + dx, chunkZ + dz))
+                getChunkFromChunkCoords(chunkX + dx, chunkZ + dz);
+        }
+    }
 #else
     (void)entity;
 #endif
@@ -4244,19 +4340,29 @@ bool World::updatingLighting()
         if (interactiveBurst && count < PLATFORM_LIGHTING_INTERACTIVE_BURST)
             count = PLATFORM_LIGHTING_INTERACTIVE_BURST;
 
-        // Wall-clock ceiling on top of that count.  One job here is a flood fill
-        // over a box, so the count alone bounds the number of jobs but not the
-        // frame; see PLATFORM_LIGHTING_BUDGET_US.  Read once, and only when the
-        // budget is enabled, so the profiles that leave it at 0 keep the
-        // original loop.
-        const uint64_t budgetStartUs = PLATFORM_LIGHTING_BUDGET_US > 0
+#ifdef PS2_OPTIMIZATION_VALIDATION
+        const int ps2ValidationLightingQueueStart = (int)lightingToUpdate.size();
+        int ps2ValidationLightingJobs = 0;
+        const auto ps2ValidationReportLighting = [&](bool countExit, bool budgetExit)
+        {
+            Ps2OptimizationValidation::lightingDrain(ps2ValidationLightingJobs, interactiveBurst,
+                countExit, budgetExit, ps2ValidationLightingQueueStart);
+        };
+#endif
+
+        // Wall-clock ceiling on top of that count. One job here is a flood fill
+        // over a box, so the count alone does not bound a frame. Interactive
+        // drains get a little more time than streaming lighting, but are still
+        // bounded; the previous unlimited burst caused tens-of-ms stalls when a
+        // short queue contained expensive open-area skylight columns.
+        const long_t requestedLightingBudgetUs = interactiveBurst
+            ? (long_t)PLATFORM_LIGHTING_INTERACTIVE_BUDGET_US
+            : (long_t)PLATFORM_LIGHTING_BUDGET_US;
+        const uint64_t budgetStartUs = requestedLightingBudgetUs > 0
             ? PlatformCompat::getMonotonicMicros()
             : 0;
-        // Clamped to the shared streaming allowance of this frame; the
-        // interactive burst below ignores it the same way it ignores the
-        // per-call ceiling.
-        const uint64_t budgetUs = PLATFORM_LIGHTING_BUDGET_US > 0
-            ? (uint64_t)PlatformStreamingFrameBudget::clampUs((long_t)PLATFORM_LIGHTING_BUDGET_US)
+        const uint64_t budgetUs = requestedLightingBudgetUs > 0
+            ? (uint64_t)PlatformStreamingFrameBudget::clampUs(requestedLightingBudgetUs)
             : 0;
         PlatformStreamingFrameBudgetScope frameBudgetScope;
 
@@ -4265,12 +4371,29 @@ bool World::updatingLighting()
         struct DirtyBatchScope
         {
             World *world;
-            explicit DirtyBatchScope(World *w) : world(w) { world->lightingDirtyRegions.begin(); }
+            uint64_t floodfillStartUs = 0;
+            bool hadSkyLight = false;
+            explicit DirtyBatchScope(World *w) : world(w)
+            {
+                world->lightingDirtyRegions.begin();
+                floodfillStartUs = PlatformCompat::getMonotonicMicros();
+            }
             ~DirtyBatchScope()
             {
                 world->markingFromLighting = true;
                 world->lightingDirtyRegions.end(world);
                 world->markingFromLighting = false;
+
+                if (hadSkyLight)
+                {
+                    const uint64_t nowUs = PlatformCompat::getMonotonicMicros();
+                    const double elapsedMs = (nowUs > floodfillStartUs) ? (double)(nowUs - floodfillStartUs) / 1000.0 : 0.0;
+                    const int affectedSubsections = world->lightingDirtyRegions.getFlushedCount();
+                    if (affectedSubsections > 0 || elapsedMs >= 0.1)
+                    {
+                        printf("[PERF] Skylight floodfill time: %.2f ms (subsecciones afectadas: %d)\n", elapsedMs, affectedSubsections);
+                    }
+                }
             }
             DirtyBatchScope(const DirtyBatchScope &) = delete;
             DirtyBatchScope &operator=(const DirtyBatchScope &) = delete;
@@ -4280,12 +4403,19 @@ bool World::updatingLighting()
         {
             if (--count <= 0)
             {
+#ifdef PS2_OPTIMIZATION_VALIDATION
+                ps2ValidationReportLighting(true, false);
+#endif
                 lightingUpdatesCounter--;
                 return true;
             }
 
             MetadataChunkBlock metadataChunkBlock = lightingToUpdate.back();
             lightingToUpdate.pop_back();
+            if (metadataChunkBlock.skyBlock == EnumSkyBlock::Sky)
+            {
+                dirtyBatchScope.hadSkyLight = true;
+            }
             // Cleared before the job runs, so propagation inside it can queue
             // this cell again exactly as it could when the queue was scanned.
             if (isSingleCellLightingJob(metadataChunkBlock))
@@ -4295,24 +4425,33 @@ bool World::updatingLighting()
                     metadataChunkBlock.minY, metadataChunkBlock.minZ));
             }
             metadataChunkBlock.updateLight(this);
+#ifdef PS2_OPTIMIZATION_VALIDATION
+            ++ps2ValidationLightingJobs;
+#endif
 
             // Returning true is what the callers already understand as "there is
             // still lighting queued", so yielding on the clock needs no new
             // protocol: the per-frame caller comes back next frame and the
             // preload drain (Minecraft::preloadWorld) simply re-enters and
             // starts a fresh budget until the queue is empty.
-            if (PLATFORM_LIGHTING_BUDGET_US > 0 && !interactiveBurst)
+            if (budgetUs > 0)
             {
                 const uint64_t nowUs = PlatformCompat::getMonotonicMicros();
                 if (nowUs > budgetStartUs &&
                     nowUs - budgetStartUs >= budgetUs)
                 {
+#ifdef PS2_OPTIMIZATION_VALIDATION
+                    ps2ValidationReportLighting(false, true);
+#endif
                     lightingUpdatesCounter--;
                     return true;
                 }
             }
         }
 
+#ifdef PS2_OPTIMIZATION_VALIDATION
+        ps2ValidationReportLighting(false, false);
+#endif
         lightingUpdatesCounter--;
         return false;
     }
@@ -6090,6 +6229,12 @@ WorldInfo* World::getWorldInfo()
 {
     return worldInfo;
 }
+
+bool World::isLimitedWorld() const
+{
+    return worldInfo != nullptr && worldInfo->isLimitedWorld();
+}
+
 
 void World::updateAllPlayersSleepingFlag()
 {

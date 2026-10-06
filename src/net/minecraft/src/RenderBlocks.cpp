@@ -2244,22 +2244,32 @@ void RenderBlocks::renderCrossedSquares(Block *block, int_t i, tess_coord_t d, t
 	tess_coord_t d8 = x + half + inset;
 	tess_coord_t d9 = (z + half) - inset;
 	tess_coord_t d10 = z + half + inset;
+#if PLATFORM_PS2
+	// PS2 direct terrain does not triangle-cull PS2_FACE_OTHER. Both windings
+	// therefore reach the GS; give the reverse winding the same UV at each
+	// spatial corner so the two coplanar quads cannot fight with mirrored texels.
+	const tess_coord_t reverseLowU = d3;
+	const tess_coord_t reverseHighU = d4;
+#else
+	const tess_coord_t reverseLowU = d4;
+	const tess_coord_t reverseHighU = d3;
+#endif
 	tessellator->addVertexWithUV(d7, y + 1.0f, d9, d3, d5);
 	tessellator->addVertexWithUV(d7, y, d9, d3, d6);
 	tessellator->addVertexWithUV(d8, y, d10, d4, d6);
 	tessellator->addVertexWithUV(d8, y + 1.0f, d10, d4, d5);
-	tessellator->addVertexWithUV(d8, y + 1.0f, d10, d3, d5);
-	tessellator->addVertexWithUV(d8, y, d10, d3, d6);
-	tessellator->addVertexWithUV(d7, y, d9, d4, d6);
-	tessellator->addVertexWithUV(d7, y + 1.0f, d9, d4, d5);
+	tessellator->addVertexWithUV(d8, y + 1.0f, d10, reverseHighU, d5);
+	tessellator->addVertexWithUV(d8, y, d10, reverseHighU, d6);
+	tessellator->addVertexWithUV(d7, y, d9, reverseLowU, d6);
+	tessellator->addVertexWithUV(d7, y + 1.0f, d9, reverseLowU, d5);
 	tessellator->addVertexWithUV(d7, y + 1.0f, d10, d3, d5);
 	tessellator->addVertexWithUV(d7, y, d10, d3, d6);
 	tessellator->addVertexWithUV(d8, y, d9, d4, d6);
 	tessellator->addVertexWithUV(d8, y + 1.0f, d9, d4, d5);
-	tessellator->addVertexWithUV(d8, y + 1.0f, d9, d3, d5);
-	tessellator->addVertexWithUV(d8, y, d9, d3, d6);
-	tessellator->addVertexWithUV(d7, y, d10, d4, d6);
-	tessellator->addVertexWithUV(d7, y + 1.0f, d10, d4, d5);
+	tessellator->addVertexWithUV(d8, y + 1.0f, d9, reverseHighU, d5);
+	tessellator->addVertexWithUV(d8, y, d9, reverseHighU, d6);
+	tessellator->addVertexWithUV(d7, y, d10, reverseLowU, d6);
+	tessellator->addVertexWithUV(d7, y + 1.0f, d10, reverseLowU, d5);
 }
 
 void RenderBlocks::renderCropsCrossed(Block *block, int_t i, tess_coord_t d, tess_coord_t d1, tess_coord_t d2)
@@ -2283,20 +2293,27 @@ void RenderBlocks::renderCropsCrossed(Block *block, int_t i, tess_coord_t d, tes
 	tess_coord_t d8 = x + 0.5f + 0.25f;
 	tess_coord_t d9 = (z + 0.5f) - 0.5f;
 	tess_coord_t d10 = z + 0.5f + 0.5f;
+#if PLATFORM_PS2
+	const tess_coord_t cropReverseLowU = d3;
+	const tess_coord_t cropReverseHighU = d4;
+#else
+	const tess_coord_t cropReverseLowU = d4;
+	const tess_coord_t cropReverseHighU = d3;
+#endif
 	tessellator->addVertexWithUV(d7, y + 1.0f, d9, d3, d5);
 	tessellator->addVertexWithUV(d7, y, d9, d3, d6);
-	tessellator->addVertexWithUV(d7, y, d10, d4, d6);
-	tessellator->addVertexWithUV(d7, y + 1.0f, d10, d4, d5);
+	tessellator->addVertexWithUV(d7, y, d10, cropReverseLowU, d6);
+	tessellator->addVertexWithUV(d7, y + 1.0f, d10, cropReverseLowU, d5);
 	tessellator->addVertexWithUV(d7, y + 1.0f, d10, d3, d5);
 	tessellator->addVertexWithUV(d7, y, d10, d3, d6);
-	tessellator->addVertexWithUV(d7, y, d9, d4, d6);
-	tessellator->addVertexWithUV(d7, y + 1.0f, d9, d4, d5);
-	tessellator->addVertexWithUV(d8, y + 1.0f, d10, d3, d5);
-	tessellator->addVertexWithUV(d8, y, d10, d3, d6);
+	tessellator->addVertexWithUV(d7, y, d9, cropReverseLowU, d6);
+	tessellator->addVertexWithUV(d7, y + 1.0f, d9, cropReverseLowU, d5);
+	tessellator->addVertexWithUV(d8, y + 1.0f, d10, cropReverseHighU, d5);
+	tessellator->addVertexWithUV(d8, y, d10, cropReverseHighU, d6);
 	tessellator->addVertexWithUV(d8, y, d9, d4, d6);
 	tessellator->addVertexWithUV(d8, y + 1.0f, d9, d4, d5);
-	tessellator->addVertexWithUV(d8, y + 1.0f, d9, d3, d5);
-	tessellator->addVertexWithUV(d8, y, d9, d3, d6);
+	tessellator->addVertexWithUV(d8, y + 1.0f, d9, cropReverseHighU, d5);
+	tessellator->addVertexWithUV(d8, y, d9, cropReverseHighU, d6);
 	tessellator->addVertexWithUV(d8, y, d10, d4, d6);
 	tessellator->addVertexWithUV(d8, y + 1.0f, d10, d4, d5);
 	d7 = (x + 0.5f) - 0.5f;
@@ -2307,23 +2324,19 @@ void RenderBlocks::renderCropsCrossed(Block *block, int_t i, tess_coord_t d, tes
 	tessellator->addVertexWithUV(d7, y, d9, d3, d6);
 	tessellator->addVertexWithUV(d8, y, d9, d4, d6);
 	tessellator->addVertexWithUV(d8, y + 1.0f, d9, d4, d5);
-	tessellator->addVertexWithUV(d8, y + 1.0f, d9, d3, d5);
-	tessellator->addVertexWithUV(d8, y, d9, d3, d6);
-	tessellator->addVertexWithUV(d7, y, d9, d4, d6);
-	tessellator->addVertexWithUV(d7, y + 1.0f, d9, d4, d5);
-	tessellator->addVertexWithUV(d8, y + 1.0f, d10, d3, d5);
-	tessellator->addVertexWithUV(d8, y, d10, d3, d6);
-	tessellator->addVertexWithUV(d7, y, d10, d4, d6);
-	tessellator->addVertexWithUV(d7, y + 1.0f, d10, d4, d5);
+	tessellator->addVertexWithUV(d8, y + 1.0f, d9, cropReverseHighU, d5);
+	tessellator->addVertexWithUV(d8, y, d9, cropReverseHighU, d6);
+	tessellator->addVertexWithUV(d7, y, d9, cropReverseLowU, d6);
+	tessellator->addVertexWithUV(d7, y + 1.0f, d9, cropReverseLowU, d5);
+	tessellator->addVertexWithUV(d8, y + 1.0f, d10, cropReverseHighU, d5);
+	tessellator->addVertexWithUV(d8, y, d10, cropReverseHighU, d6);
+	tessellator->addVertexWithUV(d7, y, d10, cropReverseLowU, d6);
+	tessellator->addVertexWithUV(d7, y + 1.0f, d10, cropReverseLowU, d5);
 }
 
 bool RenderBlocks::renderBlockFluids(Block *block, int_t i, int_t j, int_t k)
 {
 	Tessellator *tessellator = &Tessellator::instance;
-	int_t l = CustomColorizer::getFluidColor(block, blockAccess, i, j, k);
-	float f = (float)(l >> 16 & 0xff) / 255.0f;
-	float f1 = (float)(l >> 8 & 0xff) / 255.0f;
-	float f2 = (float)(l & 0xff) / 255.0f;
 	bool flag = shouldRenderFace(block, i, j + 1, k, 1);
 	bool flag1 = shouldRenderFace(block, i, j - 1, k, 0);
 	bool aflag[4];
@@ -2335,6 +2348,14 @@ bool RenderBlocks::renderBlockFluids(Block *block, int_t i, int_t j, int_t k)
 	{
 		return false;
 	}
+
+	// Fluid tinting can involve a 3x3 biome sample. Do it only after proving
+	// that at least one face will be emitted; fully enclosed water is common in
+	// deep ocean sections and otherwise pays that cost just before returning.
+	int_t l = CustomColorizer::getFluidColor(block, blockAccess, i, j, k);
+	float f = (float)(l >> 16 & 0xff) / 255.0f;
+	float f1 = (float)(l >> 8 & 0xff) / 255.0f;
+	float f2 = (float)(l & 0xff) / 255.0f;
 	bool flag2 = false;
 	float f3 = 0.5f;
 	float f4 = 1.0f;
@@ -4573,6 +4594,9 @@ void RenderBlocks::renderSouthFace(Block *block, tess_coord_t d, tess_coord_t d1
 void RenderBlocks::renderBlockOnInventory(Block *block, int_t i, float f)
 {
 	Tessellator *tessellator = &Tessellator::instance;
+	float baseR = f;
+	float baseG = f;
+	float baseB = f;
 	if (field_31088_b)
 	{
 		int_t j = block->getRenderColor(i);
@@ -4581,7 +4605,14 @@ void RenderBlocks::renderBlockOnInventory(Block *block, int_t i, float f)
 		float f1 = (float)(j >> 16 & 0xff) / 255.0f;
 		float f3 = (float)(j >> 8 & 0xff) / 255.0f;
 		float f5 = (float)(j & 0xff) / 255.0f;
-		renderColor4f(f1 * f, f3 * f, f5 * f, 1.0f);
+		baseR = f1 * f;
+		baseG = f3 * f;
+		baseB = f5 * f;
+		renderColor4f(baseR, baseG, baseB, 1.0f);
+	}
+	else
+	{
+		renderColor4f(f, f, f, 1.0f);
 	}
 	int_t k = block->getRenderType();
 	if (k == 0 || k == 16)
@@ -4598,16 +4629,22 @@ void RenderBlocks::renderBlockOnInventory(Block *block, int_t i, float f)
 		// consoles the draw call, not the four vertices, is the cost.
 		tessellator->startDrawingQuads();
 		tessellator->setNormal(0.0f, -1.0f, 0.0f);
+		tessellator->setColorOpaque_F(baseR * 0.50f, baseG * 0.50f, baseB * 0.50f);
 		renderBottomFace(block, 0.0, 0.0, 0.0, block->getBlockTextureFromSideAndMetadata(0, i));
 		tessellator->setNormal(0.0f, 1.0f, 0.0f);
+		tessellator->setColorOpaque_F(baseR * 1.00f, baseG * 1.00f, baseB * 1.00f);
 		renderTopFace(block, 0.0, 0.0, 0.0, block->getBlockTextureFromSideAndMetadata(1, i));
 		tessellator->setNormal(0.0f, 0.0f, -1.0f);
+		tessellator->setColorOpaque_F(baseR * 0.80f, baseG * 0.80f, baseB * 0.80f);
 		renderEastFace(block, 0.0, 0.0, 0.0, block->getBlockTextureFromSideAndMetadata(2, i));
 		tessellator->setNormal(0.0f, 0.0f, 1.0f);
+		tessellator->setColorOpaque_F(baseR * 0.80f, baseG * 0.80f, baseB * 0.80f);
 		renderWestFace(block, 0.0, 0.0, 0.0, block->getBlockTextureFromSideAndMetadata(3, i));
 		tessellator->setNormal(-1.0f, 0.0f, 0.0f);
+		tessellator->setColorOpaque_F(baseR * 0.60f, baseG * 0.60f, baseB * 0.60f);
 		renderNorthFace(block, 0.0, 0.0, 0.0, block->getBlockTextureFromSideAndMetadata(4, i));
 		tessellator->setNormal(1.0f, 0.0f, 0.0f);
+		tessellator->setColorOpaque_F(baseR * 0.60f, baseG * 0.60f, baseB * 0.60f);
 		renderSouthFace(block, 0.0, 0.0, 0.0, block->getBlockTextureFromSideAndMetadata(5, i));
 		tessellator->draw();
 		renderTranslate(0.5f, 0.5f, 0.5f);
@@ -4616,6 +4653,7 @@ void RenderBlocks::renderBlockOnInventory(Block *block, int_t i, float f)
 	{
 		tessellator->startDrawingQuads();
 		tessellator->setNormal(0.0f, -1.0f, 0.0f);
+		tessellator->setColorOpaque_F(baseR, baseG, baseB);
 		renderCrossedSquares(block, i, -0.5, -0.5, -0.5);
 		tessellator->draw();
 	}
@@ -4623,6 +4661,7 @@ void RenderBlocks::renderBlockOnInventory(Block *block, int_t i, float f)
 	{
 		tessellator->startDrawingQuads();
 		tessellator->setNormal(0.0f, -1.0f, 0.0f);
+		tessellator->setColorOpaque_F(baseR, baseG, baseB);
 		block->setBlockBoundsForItemRender();
 		renderBlockStemSmall(block, i, block->maxY, -0.5, -0.5, -0.5);
 		tessellator->draw();
@@ -4631,6 +4670,7 @@ void RenderBlocks::renderBlockOnInventory(Block *block, int_t i, float f)
 	{
 		tessellator->startDrawingQuads();
 		tessellator->setNormal(0.0f, -1.0f, 0.0f);
+		tessellator->setColorOpaque_F(baseR, baseG, baseB);
 		block->setBlockBoundsForItemRender();
 		tessellator->draw();
 	}
@@ -4641,32 +4681,38 @@ void RenderBlocks::renderBlockOnInventory(Block *block, int_t i, float f)
 		float f2 = 0.0625f;
 		tessellator->startDrawingQuads();
 		tessellator->setNormal(0.0f, -1.0f, 0.0f);
+		tessellator->setColorOpaque_F(baseR * 0.50f, baseG * 0.50f, baseB * 0.50f);
 		renderBottomFace(block, 0.0, 0.0, 0.0, block->getBlockTextureFromSide(0));
 		tessellator->draw();
 		tessellator->startDrawingQuads();
 		tessellator->setNormal(0.0f, 1.0f, 0.0f);
+		tessellator->setColorOpaque_F(baseR * 1.00f, baseG * 1.00f, baseB * 1.00f);
 		renderTopFace(block, 0.0, 0.0, 0.0, block->getBlockTextureFromSide(1));
 		tessellator->draw();
 		tessellator->startDrawingQuads();
 		tessellator->setNormal(0.0f, 0.0f, -1.0f);
+		tessellator->setColorOpaque_F(baseR * 0.80f, baseG * 0.80f, baseB * 0.80f);
 		tessellator->setTranslationF(0.0f, 0.0f, f2);
 		renderEastFace(block, 0.0, 0.0, 0.0, block->getBlockTextureFromSide(2));
 		tessellator->setTranslationF(0.0f, 0.0f, -f2);
 		tessellator->draw();
 		tessellator->startDrawingQuads();
 		tessellator->setNormal(0.0f, 0.0f, 1.0f);
+		tessellator->setColorOpaque_F(baseR * 0.80f, baseG * 0.80f, baseB * 0.80f);
 		tessellator->setTranslationF(0.0f, 0.0f, -f2);
 		renderWestFace(block, 0.0, 0.0, 0.0, block->getBlockTextureFromSide(3));
 		tessellator->setTranslationF(0.0f, 0.0f, f2);
 		tessellator->draw();
 		tessellator->startDrawingQuads();
 		tessellator->setNormal(-1.0f, 0.0f, 0.0f);
+		tessellator->setColorOpaque_F(baseR * 0.60f, baseG * 0.60f, baseB * 0.60f);
 		tessellator->setTranslationF(f2, 0.0f, 0.0f);
 		renderNorthFace(block, 0.0, 0.0, 0.0, block->getBlockTextureFromSide(4));
 		tessellator->setTranslationF(-f2, 0.0f, 0.0f);
 		tessellator->draw();
 		tessellator->startDrawingQuads();
 		tessellator->setNormal(1.0f, 0.0f, 0.0f);
+		tessellator->setColorOpaque_F(baseR * 0.60f, baseG * 0.60f, baseB * 0.60f);
 		tessellator->setTranslationF(-f2, 0.0f, 0.0f);
 		renderSouthFace(block, 0.0, 0.0, 0.0, block->getBlockTextureFromSide(5));
 		tessellator->setTranslationF(f2, 0.0f, 0.0f);
@@ -4677,6 +4723,7 @@ void RenderBlocks::renderBlockOnInventory(Block *block, int_t i, float f)
 	{
 		tessellator->startDrawingQuads();
 		tessellator->setNormal(0.0f, -1.0f, 0.0f);
+		tessellator->setColorOpaque_F(baseR, baseG, baseB);
 		renderCropsCrossed(block, i, -0.5, -0.5, -0.5);
 		tessellator->draw();
 	}
@@ -4684,6 +4731,7 @@ void RenderBlocks::renderBlockOnInventory(Block *block, int_t i, float f)
 	{
 		tessellator->startDrawingQuads();
 		tessellator->setNormal(0.0f, -1.0f, 0.0f);
+		tessellator->setColorOpaque_F(baseR, baseG, baseB);
 		renderTorchAtAngle(block, -0.5, -0.5, -0.5, 0.0, 0.0);
 		tessellator->draw();
 	}
@@ -4702,26 +4750,32 @@ void RenderBlocks::renderBlockOnInventory(Block *block, int_t i, float f)
 			renderTranslate(-0.5f, -0.5f, -0.5f);
 			tessellator->startDrawingQuads();
 			tessellator->setNormal(0.0f, -1.0f, 0.0f);
+			tessellator->setColorOpaque_F(baseR * 0.50f, baseG * 0.50f, baseB * 0.50f);
 			renderBottomFace(block, 0.0, 0.0, 0.0, block->getBlockTextureFromSide(0));
 			tessellator->draw();
 			tessellator->startDrawingQuads();
 			tessellator->setNormal(0.0f, 1.0f, 0.0f);
+			tessellator->setColorOpaque_F(baseR * 1.00f, baseG * 1.00f, baseB * 1.00f);
 			renderTopFace(block, 0.0, 0.0, 0.0, block->getBlockTextureFromSide(1));
 			tessellator->draw();
 			tessellator->startDrawingQuads();
 			tessellator->setNormal(0.0f, 0.0f, -1.0f);
+			tessellator->setColorOpaque_F(baseR * 0.80f, baseG * 0.80f, baseB * 0.80f);
 			renderEastFace(block, 0.0, 0.0, 0.0, block->getBlockTextureFromSide(2));
 			tessellator->draw();
 			tessellator->startDrawingQuads();
 			tessellator->setNormal(0.0f, 0.0f, 1.0f);
+			tessellator->setColorOpaque_F(baseR * 0.80f, baseG * 0.80f, baseB * 0.80f);
 			renderWestFace(block, 0.0, 0.0, 0.0, block->getBlockTextureFromSide(3));
 			tessellator->draw();
 			tessellator->startDrawingQuads();
 			tessellator->setNormal(-1.0f, 0.0f, 0.0f);
+			tessellator->setColorOpaque_F(baseR * 0.60f, baseG * 0.60f, baseB * 0.60f);
 			renderNorthFace(block, 0.0, 0.0, 0.0, block->getBlockTextureFromSide(4));
 			tessellator->draw();
 			tessellator->startDrawingQuads();
 			tessellator->setNormal(1.0f, 0.0f, 0.0f);
+			tessellator->setColorOpaque_F(baseR * 0.60f, baseG * 0.60f, baseB * 0.60f);
 			renderSouthFace(block, 0.0, 0.0, 0.0, block->getBlockTextureFromSide(5));
 			tessellator->draw();
 			renderTranslate(0.5f, 0.5f, 0.5f);
@@ -4754,16 +4808,22 @@ void RenderBlocks::renderBlockOnInventory(Block *block, int_t i, float f)
 			block->setBlockBounds(0.5f - radius, bottom, 0.5f - radius,
 				0.5f + radius, top, 0.5f + radius);
 			tessellator->setNormal(0.0f, -1.0f, 0.0f);
+			tessellator->setColorOpaque_F(baseR * 0.50f, baseG * 0.50f, baseB * 0.50f);
 			renderBottomFace(block, 0.0, 0.0, 0.0, block->getBlockTextureFromSide(0));
 			tessellator->setNormal(0.0f, 1.0f, 0.0f);
+			tessellator->setColorOpaque_F(baseR * 1.00f, baseG * 1.00f, baseB * 1.00f);
 			renderTopFace(block, 0.0, 0.0, 0.0, block->getBlockTextureFromSide(1));
 			tessellator->setNormal(0.0f, 0.0f, -1.0f);
+			tessellator->setColorOpaque_F(baseR * 0.80f, baseG * 0.80f, baseB * 0.80f);
 			renderEastFace(block, 0.0, 0.0, 0.0, block->getBlockTextureFromSide(2));
 			tessellator->setNormal(0.0f, 0.0f, 1.0f);
+			tessellator->setColorOpaque_F(baseR * 0.80f, baseG * 0.80f, baseB * 0.80f);
 			renderWestFace(block, 0.0, 0.0, 0.0, block->getBlockTextureFromSide(3));
 			tessellator->setNormal(-1.0f, 0.0f, 0.0f);
+			tessellator->setColorOpaque_F(baseR * 0.60f, baseG * 0.60f, baseB * 0.60f);
 			renderNorthFace(block, 0.0, 0.0, 0.0, block->getBlockTextureFromSide(4));
 			tessellator->setNormal(1.0f, 0.0f, 0.0f);
+			tessellator->setColorOpaque_F(baseR * 0.60f, baseG * 0.60f, baseB * 0.60f);
 			renderSouthFace(block, 0.0, 0.0, 0.0, block->getBlockTextureFromSide(5));
 		}
 		tessellator->draw();
@@ -4795,26 +4855,32 @@ void RenderBlocks::renderBlockOnInventory(Block *block, int_t i, float f)
 			renderTranslate(-0.5f, -0.5f, -0.5f);
 			tessellator->startDrawingQuads();
 			tessellator->setNormal(0.0f, -1.0f, 0.0f);
+			tessellator->setColorOpaque_F(baseR * 0.50f, baseG * 0.50f, baseB * 0.50f);
 			renderBottomFace(block, 0.0, 0.0, 0.0, block->getBlockTextureFromSide(0));
 			tessellator->draw();
 			tessellator->startDrawingQuads();
 			tessellator->setNormal(0.0f, 1.0f, 0.0f);
+			tessellator->setColorOpaque_F(baseR * 1.00f, baseG * 1.00f, baseB * 1.00f);
 			renderTopFace(block, 0.0, 0.0, 0.0, block->getBlockTextureFromSide(1));
 			tessellator->draw();
 			tessellator->startDrawingQuads();
 			tessellator->setNormal(0.0f, 0.0f, -1.0f);
+			tessellator->setColorOpaque_F(baseR * 0.80f, baseG * 0.80f, baseB * 0.80f);
 			renderEastFace(block, 0.0, 0.0, 0.0, block->getBlockTextureFromSide(2));
 			tessellator->draw();
 			tessellator->startDrawingQuads();
 			tessellator->setNormal(0.0f, 0.0f, 1.0f);
+			tessellator->setColorOpaque_F(baseR * 0.80f, baseG * 0.80f, baseB * 0.80f);
 			renderWestFace(block, 0.0, 0.0, 0.0, block->getBlockTextureFromSide(3));
 			tessellator->draw();
 			tessellator->startDrawingQuads();
 			tessellator->setNormal(-1.0f, 0.0f, 0.0f);
+			tessellator->setColorOpaque_F(baseR * 0.60f, baseG * 0.60f, baseB * 0.60f);
 			renderNorthFace(block, 0.0, 0.0, 0.0, block->getBlockTextureFromSide(4));
 			tessellator->draw();
 			tessellator->startDrawingQuads();
 			tessellator->setNormal(1.0f, 0.0f, 0.0f);
+			tessellator->setColorOpaque_F(baseR * 0.60f, baseG * 0.60f, baseB * 0.60f);
 			renderSouthFace(block, 0.0, 0.0, 0.0, block->getBlockTextureFromSide(5));
 			tessellator->draw();
 			renderTranslate(0.5f, 0.5f, 0.5f);
@@ -4836,26 +4902,32 @@ void RenderBlocks::renderBlockOnInventory(Block *block, int_t i, float f)
 			renderTranslate(-0.5f, -0.5f, -0.5f);
 			tessellator->startDrawingQuads();
 			tessellator->setNormal(0.0f, -1.0f, 0.0f);
+			tessellator->setColorOpaque_F(baseR * 0.50f, baseG * 0.50f, baseB * 0.50f);
 			renderBottomFace(block, 0.0, 0.0, 0.0, block->getBlockTextureFromSide(0));
 			tessellator->draw();
 			tessellator->startDrawingQuads();
 			tessellator->setNormal(0.0f, 1.0f, 0.0f);
+			tessellator->setColorOpaque_F(baseR * 1.00f, baseG * 1.00f, baseB * 1.00f);
 			renderTopFace(block, 0.0, 0.0, 0.0, block->getBlockTextureFromSide(1));
 			tessellator->draw();
 			tessellator->startDrawingQuads();
 			tessellator->setNormal(0.0f, 0.0f, -1.0f);
+			tessellator->setColorOpaque_F(baseR * 0.80f, baseG * 0.80f, baseB * 0.80f);
 			renderEastFace(block, 0.0, 0.0, 0.0, block->getBlockTextureFromSide(2));
 			tessellator->draw();
 			tessellator->startDrawingQuads();
 			tessellator->setNormal(0.0f, 0.0f, 1.0f);
+			tessellator->setColorOpaque_F(baseR * 0.80f, baseG * 0.80f, baseB * 0.80f);
 			renderWestFace(block, 0.0, 0.0, 0.0, block->getBlockTextureFromSide(3));
 			tessellator->draw();
 			tessellator->startDrawingQuads();
 			tessellator->setNormal(-1.0f, 0.0f, 0.0f);
+			tessellator->setColorOpaque_F(baseR * 0.60f, baseG * 0.60f, baseB * 0.60f);
 			renderNorthFace(block, 0.0, 0.0, 0.0, block->getBlockTextureFromSide(4));
 			tessellator->draw();
 			tessellator->startDrawingQuads();
 			tessellator->setNormal(1.0f, 0.0f, 0.0f);
+			tessellator->setColorOpaque_F(baseR * 0.60f, baseG * 0.60f, baseB * 0.60f);
 			renderSouthFace(block, 0.0, 0.0, 0.0, block->getBlockTextureFromSide(5));
 			tessellator->draw();
 			renderTranslate(0.5f, 0.5f, 0.5f);

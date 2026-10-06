@@ -18,6 +18,7 @@
 #include <cstdio>
 #include "ps2/render/Ps2Vu0MeshFinalize.h"
 #include "ps2/render/Ps2GsQueue.h"
+#include "ps2/diagnostics/Ps2OptimizationValidation.h"
 #endif
 
 #include "platform/RenderAPI.h"
@@ -28,6 +29,7 @@
 #include "platform/RenderTerrainStaging.h"
 #include "client/Minecraft.h"
 #include "Config.h"
+#include "ActiveRenderInfo.h"
 #include "CustomColorizer.h"
 #include "Block.h"
 #include "BlockLeaves.h"
@@ -35,6 +37,7 @@
 #include "EntityLiving.h"
 #include "EntityPlayer.h"
 #include "EntityPlayerSP.h"
+#include "Potion.h"
 #include "EntityRenderer.h"
 #include "EffectRenderer.h"
 #include "EntityBubbleFX.h"
@@ -117,6 +120,27 @@ inline void applyPs2LegacyAtmosphereRgb(Minecraft *mc, float &red, float &green,
 	(void)blue;
 #endif
 }
+
+#if PLATFORM_PS2
+inline bool ps2SectionBeyondFog(WorldRenderer *renderer,
+	float eyeX, float eyeY, float eyeZ, float distance)
+{
+	if (renderer == nullptr)
+		return false;
+
+	const float minX = static_cast<float>(renderer->posX);
+	const float minY = static_cast<float>(renderer->posY);
+	const float minZ = static_cast<float>(renderer->posZ);
+	const float maxX = minX + static_cast<float>(renderer->sizeWidth);
+	const float maxY = minY + static_cast<float>(renderer->sizeHeight);
+	const float maxZ = minZ + static_cast<float>(renderer->sizeDepth);
+
+	const float dx = eyeX < minX ? minX - eyeX : (eyeX > maxX ? eyeX - maxX : 0.0f);
+	const float dy = eyeY < minY ? minY - eyeY : (eyeY > maxY ? eyeY - maxY : 0.0f);
+	const float dz = eyeZ < minZ ? minZ - eyeZ : (eyeZ > maxZ ? eyeZ - maxZ : 0.0f);
+	return dx * dx + dy * dy + dz * dz > distance * distance;
+}
+#endif
 }
 
 RenderGlobal::RenderGlobal(Minecraft *minecraft, RenderEngine *renderengine)
@@ -1420,6 +1444,58 @@ int_t RenderGlobal::renderSortedRenderers(int_t i, int_t j, int_t k, double d)
 	const bool useOcclusion = false;
 #endif
 
+	EntityLiving *entityliving = mc->renderViewEntity;
+#if PLATFORM_PS2
+	bool ps2CullTerrainByFog = false;
+	float ps2TerrainCullDistance = 0.0f;
+	float ps2FogEyeX = 0.0f;
+	float ps2FogEyeY = 0.0f;
+	float ps2FogEyeZ = 0.0f;
+	if ((k == 0 || k == 1) && entityliving != nullptr)
+	{
+		const int_t viewBlockId = mc != nullptr && mc->theWorld != nullptr
+			? ActiveRenderInfo::getBlockIdAtEntityViewpoint(mc->theWorld, entityliving, static_cast<float>(d))
+			: 0;
+		Material *viewMaterial = viewBlockId > 0 && viewBlockId < Block::BLOCK_REGISTRY_SIZE &&
+			Block::blocksList[viewBlockId] != nullptr
+			? Block::blocksList[viewBlockId]->blockMaterial : nullptr;
+
+		if (viewMaterial == Material::water)
+		{
+			// Preserve the existing translucent-only underwater cull. Clear Water
+			// and Water Breathing extend visibility enough that the fixed 32-block
+			// cutoff would become visible, so keep the full pass in those cases.
+			ps2CullTerrainByFog = k == 1 && !Config::isClearWater() &&
+				!entityliving->isPotionActive(Potion::waterBreathing);
+			ps2TerrainCullDistance = PS2_UNDERWATER_TRANSLUCENT_CULL_DISTANCE;
+		}
+		else if (mc != nullptr && mc->theWorld != nullptr && mc->theWorld->worldProvider != nullptr &&
+			!mc->theWorld->worldProvider->isNether && !Config::isFogOff())
+		{
+			// On the PS2 fixed-grid renderer, EntityRenderer clamps normal
+			// linear fog to the loaded edge. Sections whose entire AABB is past
+			// that edge are fully fogged already, so submitting their expensive
+			// terrain geometry cannot affect the final image. Apply the same
+			// conservative whole-AABB rejection to both opaque and translucent
+			// passes. This matters in villages as well as oceans: pass 0 otherwise
+			// spends several milliseconds drawing sections already replaced by fog.
+			ps2CullTerrainByFog = true;
+			ps2TerrainCullDistance = static_cast<float>(PLATFORM_VISIBLE_CHUNK_RADIUS * 16);
+		}
+
+		if (ps2CullTerrainByFog)
+		{
+			ps2FogEyeX = static_cast<float>(entityliving->lastTickPosX +
+				(entityliving->posX - entityliving->lastTickPosX) * d);
+			ps2FogEyeY = static_cast<float>(entityliving->lastTickPosY +
+				(entityliving->posY - entityliving->lastTickPosY) * d +
+				static_cast<double>(entityliving->getEyeHeight()));
+			ps2FogEyeZ = static_cast<float>(entityliving->lastTickPosZ +
+				(entityliving->posZ - entityliving->lastTickPosZ) * d);
+		}
+	}
+#endif
+
 	int_t l = 0;
 	for (int_t i1 = i; i1 < j; i1++)
 	{
@@ -1456,6 +1532,18 @@ int_t RenderGlobal::renderSortedRenderers(int_t i, int_t j, int_t k, double d)
 			(useOcclusion && !sortedRenderer->isVisible))
 			continue;
 
+#if PLATFORM_PS2
+		if (ps2CullTerrainByFog &&
+			ps2SectionBeyondFog(sortedRenderer, ps2FogEyeX, ps2FogEyeY, ps2FogEyeZ,
+				ps2TerrainCullDistance))
+		{
+#ifdef PS2_OPTIMIZATION_VALIDATION
+			Ps2OptimizationValidation::terrainFogCull(k);
+#endif
+			continue;
+		}
+#endif
+
 #if PLATFORM_PS2 || defined(WII_PLATFORM)
 		// Native console terrain uses the renderer itself as the draw contract.
 		// Visibility/pass checks above are sufficient; Wii resolves a GX handle
@@ -1472,7 +1560,6 @@ int_t RenderGlobal::renderSortedRenderers(int_t i, int_t j, int_t k, double d)
 #endif
 	}
 
-	EntityLiving *entityliving = mc->renderViewEntity;
 	double d1 = entityliving->lastTickPosX + (entityliving->posX - entityliving->lastTickPosX) * d;
 	double d2 = entityliving->lastTickPosY + (entityliving->posY - entityliving->lastTickPosY) * d;
 	double d3 = entityliving->lastTickPosZ + (entityliving->posZ - entityliving->lastTickPosZ) * d;
@@ -1516,13 +1603,13 @@ int_t RenderGlobal::renderSortedRenderers(int_t i, int_t j, int_t k, double d)
 		renderedNow++;
 	}
 
-#ifdef PS2_RENDER_STATS
+#if MC_LOG_LEVEL >= 2
 	// Pass 1 (water/ice/glass) was never instrumented: every counter above is
 	// gated on k == 0. Without it there is no way to tell "the section was never
 	// submitted" (culled, no mesh yet, or dropped by the cap) from "it was
 	// submitted and the GS discarded it" (depth test, blend, alpha) — which is
 	// exactly the ambiguity behind water that comes and goes. The extra sweep
-	// only exists in PS2_RENDER_STATS builds.
+	// runs every 120 passes without enabling per-vertex PS2_RENDER_STATS timers.
 	static int s_ps2TerrainLogTick[2] = { 0, 0 };
 	if (k >= 0 && k <= 1 && ++s_ps2TerrainLogTick[k] >= 120)
 	{
@@ -2505,6 +2592,31 @@ bool RenderGlobal::updateRenderers(EntityLiving *entityliving, bool flag)
 {
 #if PLATFORM_PS2
 	const bool ps2MeshPressure = trimPs2MeshCache(entityliving);
+#if PLATFORM_CULL_FAR_SUBTERRANEAN
+	if (entityliving != nullptr && worldRenderers != nullptr)
+	{
+		const int_t viewerChunkX = JavaArithmetic::intShr(MathHelper::floor_double(entityliving->posX), 4);
+		const int_t viewerChunkZ = JavaArithmetic::intShr(MathHelper::floor_double(entityliving->posZ), 4);
+		const double viewerY = entityliving->posY;
+		const int_t totalRenderers = renderChunksWide * renderChunksTall * renderChunksDeep;
+		for (int_t i = 0; i < totalRenderers; ++i)
+		{
+			WorldRenderer *wr = worldRenderers[i];
+			if (wr != nullptr && wr->ps2SkippedAsFarSubterranean)
+			{
+				const int_t wrChunkX = JavaArithmetic::intShr(wr->posX, 4);
+				const int_t wrChunkZ = JavaArithmetic::intShr(wr->posZ, 4);
+				const int_t distChunk = std::max(std::abs(wrChunkX - viewerChunkX), std::abs(wrChunkZ - viewerChunkZ));
+				if (distChunk < 2 || viewerY < 50.0)
+				{
+					wr->ps2SkippedAsFarSubterranean = false;
+					wr->markDirty();
+					enqueueRendererUpdate(wr);
+				}
+			}
+		}
+	}
+#endif
 #endif
 	if (worldRenderersToUpdate.empty())
 		return true;
@@ -2643,6 +2755,8 @@ bool RenderGlobal::updateRenderers(EntityLiving *entityliving, bool flag)
 	if (PLATFORM_URGENT_MESH_BUDGET_MS > 0)
 	{
 		long long urgentSpentUs = 0;
+		int urgentChunkCount = 0;
+		int urgentVerticesBuilt = 0;
 		for (std::size_t i = 0; i < sortedCandidateCount; ++i)
 		{
 			WorldRenderer *candidate = rendererUpdateCandidates[i];
@@ -2665,6 +2779,7 @@ bool RenderGlobal::updateRenderers(EntityLiving *entityliving, bool flag)
 #endif
 			}
 
+			urgentChunkCount++;
 			attempted++;
 			// Step cap as well as the clock: on a board where the monotonic
 			// clock reads 0 (see PS2_CHUNK_BUILD_BUDGET_MS) the clock alone
@@ -2721,7 +2836,11 @@ bool RenderGlobal::updateRenderers(EntityLiving *entityliving, bool flag)
 			// batch is microseconds, and the clock still bounds the lane.
 			int_t urgentPacketPolls = 0;
 #endif
-			while (candidate->needsUpdate && urgentSteps < (int_t)PLATFORM_URGENT_MESH_STEP_CAP &&
+			while (candidate->needsUpdate &&
+#if PLATFORM_PS2
+			       candidate->urgentRebuild &&
+#endif
+			       urgentSteps < (int_t)PLATFORM_URGENT_MESH_STEP_CAP &&
 			       urgentSpentUs < (long long)PLATFORM_URGENT_MESH_BUDGET_MS * 1000LL)
 			{
 				++urgentSteps;
@@ -2748,7 +2867,7 @@ bool RenderGlobal::updateRenderers(EntityLiving *entityliving, bool flag)
 				const uint64_t nowUs = PlatformCompat::getMonotonicMicros();
 				MC_LOG_DEBUG("ps2", "urgent mesh: %s after %ld us (steps=%d owner=%d polls=%d lane=%lld us"
 					" activeIn=%d activeOut=%d restarts=%u pending=%d)\n",
-					candidate->needsUpdate ? "yielded" : "published",
+					candidate->urgentRebuild ? "yielded" : "published",
 					(long)(nowUs > candidate->urgentMarkUs ? nowUs - candidate->urgentMarkUs : 0),
 					(int)urgentSteps, (int)urgentOwnerSteps, (int)urgentPacketPolls, urgentSpentUs,
 					urgentBuildActiveAtEntry ? 1 : 0, candidate->isTerrainBuildInProgress() ? 1 : 0,
@@ -2756,11 +2875,22 @@ bool RenderGlobal::updateRenderers(EntityLiving *entityliving, bool flag)
 					(int)worldRenderersToUpdate.size());
 			}
 #endif
+#ifdef PS2_OPTIMIZATION_VALIDATION
+			Ps2OptimizationValidation::meshUrgentFinished(!candidate->urgentRebuild);
+#endif
 			if (!candidate->needsUpdate)
 			{
 				candidate->urgentRebuild = false;
 				completed++;
+#if PLATFORM_PS2 || PLATFORM_WII
+				urgentVerticesBuilt += (int)candidate->getTotalMeshVertexCount();
+#endif
 			}
+		}
+		if (urgentChunkCount > 0)
+		{
+			printf("[PERF] Urgent meshing queue: %d chunks | Tiempo total remallado: %.2f ms | Vértices generados: %d\n",
+			       urgentChunkCount, (double)urgentSpentUs / 1000.0, urgentVerticesBuilt);
 		}
 	}
 
@@ -3082,7 +3212,20 @@ void RenderGlobal::drawOutlinedBoundingBox(AxisAlignedBB *axisalignedbb)
 
 void RenderGlobal::markBlockAndNeighborsNeedsUpdate(int_t i, int_t j, int_t k)
 {
-	markRenderersInRange(i - 1, j - 1, k - 1, i + 1, j + 1, k + 1);
+	int_t minY = j - 1;
+	if (worldObj != nullptr && j > 0 && (j & 15) == 0)
+	{
+		int_t blockBelow = worldObj->getBlockId(i, j - 1, k);
+		int_t currentBlock = worldObj->getBlockId(i, j, k);
+		if (blockBelow > 0 && blockBelow < Block::BLOCK_REGISTRY_SIZE && Block::opaqueCubeLookup[blockBelow])
+		{
+			if (currentBlock > 0 && Block::opaqueCubeLookup[currentBlock])
+			{
+				minY = j;
+			}
+		}
+	}
+	markRenderersInRange(i - 1, minY, k - 1, i + 1, j + 1, k + 1);
 }
 
 void RenderGlobal::markBlockRangeNeedsUpdate(int_t i, int_t j, int_t k, int_t l, int_t i1, int_t j1)
@@ -3122,6 +3265,10 @@ void RenderGlobal::markRenderersInRange(int_t i, int_t j, int_t k, int_t l, int_
 	int_t k2 = MathHelper::bucketInt(i1, 16);
 	int_t l2 = MathHelper::bucketInt(j1, 16);
 
+	const int_t centerSectionX = MathHelper::bucketInt((i + l) / 2, 16);
+	const int_t centerSectionY = MathHelper::bucketInt((j + i1) / 2, 16);
+	const int_t centerSectionZ = MathHelper::bucketInt((k + j1) / 2, 16);
+
 	for (int_t i3 = k1; i3 <= j2; i3++)
 	{
 		int_t j3 = i3 % renderChunksWide;
@@ -3153,14 +3300,23 @@ void RenderGlobal::markRenderersInRange(int_t i, int_t j, int_t k, int_t l, int_
 				int_t k4 = (j4 * renderChunksTall + l3) * renderChunksWide + j3;
 				WorldRenderer *worldrenderer = worldRenderers[k4];
 
+				const int sectionDiff = (i3 != centerSectionX ? 1 : 0) + (k3 != centerSectionY ? 1 : 0) + (i4 != centerSectionZ ? 1 : 0);
+				const bool isDirectFaceNeighbor = (sectionDiff <= 1);
+
 #if PLATFORM_PS2 || PLATFORM_WII
 				// Active builds must observe every mutation so deferred population
 				// can mark one final rebuild without throwing away the current staging
 				// mesh. markDirty() itself decides whether to coalesce or restart; a
 				// light-only mark always coalesces.
 				enqueueRendererUpdatePriority(worldrenderer);
-				if (worldObj != nullptr && worldObj->isMarkingFromLighting())
+				const bool playerEdit = worldObj != nullptr && worldObj->isMarkingFromPlayerEdit();
+				if (worldObj != nullptr && (worldObj->isMarkingFromLighting() || !playerEdit))
 				{
+					// Lighting and server/world-driven mutations may arrive repeatedly while
+					// a section is already being built (flowing water is the common case).
+					// Coalesce them into one follow-up rebuild instead of throwing away the
+					// partial mesh on every packet/tick. Player edits keep the immediate
+					// restart + urgent lane below.
 					worldrenderer->markDirtyFromLighting();
 				}
 				else
@@ -3170,15 +3326,22 @@ void RenderGlobal::markRenderersInRange(int_t i, int_t j, int_t k, int_t l, int_
 					// See the urgent lane in updateRenderers(). The edit scope is
 					// what separates it from a spring or a gravel vein settling at
 					// the same distance while terrain streams in.
-					if (PLATFORM_URGENT_MESH_DISTANCE_SQ > 0.0f && mc != nullptr &&
+					// Primary and direct face-adjacent neighbor sections are marked urgent
+					// so revealed neighbor faces update immediately without a 1-second delay,
+					// while edge/corner diagonal sections remain in the streaming queue.
+					if (isDirectFaceNeighbor &&
+					    PLATFORM_URGENT_MESH_DISTANCE_SQ > 0.0f && mc != nullptr &&
 					    mc->renderViewEntity != nullptr &&
-					    worldObj != nullptr && worldObj->isMarkingFromPlayerEdit() &&
+					    playerEdit &&
 					    worldrenderer->distanceToEntitySquared(mc->renderViewEntity) <= PLATFORM_URGENT_MESH_DISTANCE_SQ)
 					{
 #if PLATFORM_PS2 && MC_LOG_LEVEL >= 2
 						worldrenderer->urgentMarkUs = PlatformCompat::getMonotonicMicros();
 #endif
 						worldrenderer->urgentRebuild = true;
+#ifdef PS2_OPTIMIZATION_VALIDATION
+						Ps2OptimizationValidation::meshUrgentMarked();
+#endif
 					}
 				}
 #elif PLATFORM_PC_LEGACY
@@ -3531,9 +3694,9 @@ void RenderGlobal::playAuxSFX(EntityPlayer *entityplayer, int_t i, int_t j, int_
 			Block *block = Block::blocksList[blockId];
 			mc->sndManager->playSound(block->stepSound->getBreakSound(), (float)j + 0.5f, (float)k + 0.5f, (float)l + 0.5f,
 			                          (block->stepSound->getVolume() + 1.0f) / 2.0f, block->stepSound->getPitch() * 0.8f);
+			if (mc->effectRenderer != nullptr)
+				mc->effectRenderer->addBlockDestroyEffects(j, k, l, blockId, (i1 >> 12) & 255);
 		}
-		if (mc->effectRenderer != nullptr)
-			mc->effectRenderer->addBlockDestroyEffects(j, k, l, blockId, (i1 >> 12) & 255);
 		break;
 	}
 

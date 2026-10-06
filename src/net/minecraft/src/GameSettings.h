@@ -41,6 +41,7 @@ public:
 	// after editing one of the wii*Jump/Sneak/Drop/Inventory fields below,
 	// same as GuiDeadzoneSettings calling PlatformUserSettings directly.
 	void syncControllerBindingsToPlatform();
+	void applyLegacyCraftingBindings();
 
 private:
 	void setDefaults();
@@ -89,6 +90,7 @@ public:
 	KeyBinding *keyBindRight;
 	KeyBinding *keyBindJump;
 	KeyBinding *keyBindInventory;
+	KeyBinding *keyBindCrafting;
 	KeyBinding *keyBindDrop;
 	KeyBinding *keyBindChat;
 	KeyBinding *keyBindPlayerList;
@@ -110,8 +112,11 @@ public:
 	// not need command-line arguments to choose a player name.
 	std::string playerName;
 	std::string selectedSkin;
+	std::string selectedSkinP2;
 	bool legacyUI;
 	bool legacyLook;
+	bool legacyCrafting;
+	bool legacyCreative;
 	int_t renderBackend;
 	bool alternativeControllerLayout;
 	// Platform-neutral controller settings consumed through PlatformUserSettings.
@@ -126,6 +131,7 @@ public:
 	// Wii only: vertical deflicker filter on the display copy (see gx_wii.cpp).
 	bool wiiDeflicker;
 	bool widescreen;
+	bool splitscreenVertical;
 	bool field_22275_C;
 	bool smoothCamera;
 	bool field_22273_E;

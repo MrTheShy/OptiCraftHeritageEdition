@@ -46,6 +46,7 @@ public:
 
 protected:
 	virtual void handleSpecializedMenuInput();
+	void handleSplitscreenPlayerInput();
 
 public:
 	virtual void handleMouseInput();
@@ -67,8 +68,12 @@ public:
 	virtual void selectNextField();
 	void notifyTextFieldFocus(GuiTextField *field, bool focused);
 
+	void setOwnerPlayerIndex(int idx) { m_ownerPlayerIndex = idx; }
+	virtual int getOwnerPlayerIndex() const;
+
 protected:
 	Minecraft *mc;
+	int m_ownerPlayerIndex;
 
 public:
 	int_t width;
@@ -82,12 +87,12 @@ public:
 
 protected:
 	FontRenderer *fontRenderer;
+	virtual bool isJavaUiKeyboardNavigationEnabled() const;
 
 public:
 	GuiParticle *guiParticles;  // field_25091_h
 
 private:
-	bool isJavaUiKeyboardNavigationEnabled() const;
 	void syncKeyboardSelection();
 	bool moveKeyboardSelection(int_t direction);
 	bool activateKeyboardSelection();
