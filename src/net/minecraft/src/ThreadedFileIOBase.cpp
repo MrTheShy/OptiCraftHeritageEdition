@@ -6,6 +6,10 @@
 
 #include "IThreadedFileIO.h"
 
+#ifdef VITA_PLATFORM
+#include <psp2/kernel/threadmgr.h>
+#endif
+
 ThreadedFileIOBase ThreadedFileIOBase::threadedIOInstance;
 
 ThreadedFileIOBase::ThreadedFileIOBase() :
@@ -36,6 +40,9 @@ ThreadedFileIOBase::~ThreadedFileIOBase()
 
 void ThreadedFileIOBase::run()
 {
+#ifdef VITA_PLATFORM
+	sceKernelChangeThreadCpuAffinityMask(sceKernelGetThreadId(), SCE_KERNEL_CPU_MASK_USER_1 | SCE_KERNEL_CPU_MASK_USER_2);
+#endif
 	for (;;)
 	{
 		{

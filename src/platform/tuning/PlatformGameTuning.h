@@ -244,7 +244,11 @@
 #  define PLATFORM_PRELOAD_RADIUS_BLOCKS                (PLATFORM_PC_LEGACY ? PC_LEGACY_PRELOAD_RADIUS_BLOCKS : 128)
 #  define PLATFORM_PLAYER_UPDATE_CHUNK_RANGE_BLOCKS     32
 #  define PLATFORM_DISABLE_RUNTIME_AUTOSAVE             0
-#  define PLATFORM_RUNTIME_AUTOSAVE_LEVEL_DATA          1
+#  ifdef VITA_PLATFORM
+#    define PLATFORM_RUNTIME_AUTOSAVE_LEVEL_DATA        0
+#  else
+#    define PLATFORM_RUNTIME_AUTOSAVE_LEVEL_DATA        1
+#  endif
 #  define PLATFORM_SKIP_NEW_WORLD_FULL_SAVE             0
 // Vanilla Beta 1.7.3: World::autosavePeriod, in world ticks. 40 ticks is two
 // seconds, and each firing rewrites level.dat and flushes up to two dirty chunks
@@ -252,7 +256,11 @@
 // against a console filesystem, which is why it is a knob now.
 #  define PLATFORM_AUTOSAVE_PERIOD_TICKS                40
 // Release 1.2.5 saves at most 24 dirty chunks during an incremental save.
-#  define PLATFORM_INCREMENTAL_CHUNK_SAVE_LIMIT         24
+#  ifdef VITA_PLATFORM
+#    define PLATFORM_INCREMENTAL_CHUNK_SAVE_LIMIT       2
+#  else
+#    define PLATFORM_INCREMENTAL_CHUNK_SAVE_LIMIT       24
+#  endif
 // Whether chunk meshing is bounded per frame. Off on the desktop, where
 // EntityRenderer's own time-limited retry loop is the budget and there is plenty
 // of headroom to overshoot it.

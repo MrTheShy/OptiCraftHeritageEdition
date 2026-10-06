@@ -40,6 +40,11 @@ void SoundManager::tryToSetLibraryAndCodecs() {}
 #include <cstring>
 #include <cstdlib>
 
+#ifdef VITA_PLATFORM
+#include <string>
+#include <unordered_map>
+#endif
+
 #include "SDL.h"
 
 #include "pc/external/stb_vorbis.h"
@@ -147,7 +152,41 @@ static std::vector<float> decodeWav(const std::string &path)
     return out;
 }
 
+#ifdef VITA_PLATFORM
+static std::unordered_map<std::string, std::vector<float>> s_soundCache;
+static std::size_t s_soundCacheBytes = 0;
+static constexpr std::size_t kSoundCacheLimitBytes = 32u * 1024u * 1024u;
+static constexpr std::size_t kSoundCacheEntryLimitBytes = 2u * 1024u * 1024u;
+#endif
+
+static std::vector<float> loadSoundUncached(const std::string &path, float pitch);
+
 static std::vector<float> loadSound(const std::string &path, float pitch = 1.0f)
+{
+#ifdef VITA_PLATFORM
+    auto cached = s_soundCache.find(path);
+    if (cached != s_soundCache.end())
+        return cached->second;
+    std::vector<float> decoded = loadSoundUncached(path, pitch);
+    if (decoded.empty())
+        return decoded;
+    const std::size_t bytes = decoded.size() * sizeof(float);
+    if (bytes > kSoundCacheEntryLimitBytes)
+        return decoded;
+    if (s_soundCacheBytes + bytes > kSoundCacheLimitBytes)
+    {
+        s_soundCache.clear();
+        s_soundCacheBytes = 0;
+    }
+    s_soundCache.emplace(path, decoded);
+    s_soundCacheBytes += bytes;
+    return decoded;
+#else
+    return loadSoundUncached(path, pitch);
+#endif
+}
+
+static std::vector<float> loadSoundUncached(const std::string &path, float pitch)
 {
     if (path.size() >= 4 && path.substr(path.size() - 4) == ".ogg")
         return decodeOgg(path, pitch);

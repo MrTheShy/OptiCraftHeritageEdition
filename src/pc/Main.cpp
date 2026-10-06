@@ -17,6 +17,7 @@
 #include "pc/render/PcRenderBackend.h"
 
 #ifdef VITA_PLATFORM
+#include <psp2/kernel/threadmgr.h>
 #include <psp2/power.h>
 
 extern "C"
@@ -113,6 +114,7 @@ int main(int argc, char *argv[])
 	scePowerSetBusClockFrequency(222);
 	scePowerSetGpuClockFrequency(222);
 	scePowerSetGpuXbarClockFrequency(166);
+	sceKernelChangeThreadCpuAffinityMask(sceKernelGetThreadId(), SCE_KERNEL_CPU_MASK_USER_0);
 #endif
 	if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS | SDL_INIT_TIMER | SDL_INIT_AUDIO) < 0)
 		throw SDLException();

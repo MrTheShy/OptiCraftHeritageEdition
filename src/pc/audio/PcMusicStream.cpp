@@ -10,6 +10,10 @@
 #include <mutex>
 #include <thread>
 
+#ifdef VITA_PLATFORM
+#include <psp2/kernel/threadmgr.h>
+#endif
+
 namespace
 {
 constexpr int kOutputSampleRate = 44100;
@@ -40,6 +44,9 @@ bool validateOgg(const std::string &path)
 
 void decoderThread(std::string path)
 {
+#ifdef VITA_PLATFORM
+    sceKernelChangeThreadCpuAffinityMask(sceKernelGetThreadId(), SCE_KERNEL_CPU_MASK_USER_1 | SCE_KERNEL_CPU_MASK_USER_2);
+#endif
     int error = 0;
     stb_vorbis *vorbis = platformOpenVorbis(path, &error);
     if (vorbis == nullptr)

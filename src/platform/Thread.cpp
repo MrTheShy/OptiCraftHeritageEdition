@@ -17,6 +17,9 @@
 #endif
 #include <windows.h>
 #endif
+#if defined(VITA_PLATFORM)
+#include <psp2/kernel/threadmgr.h>
+#endif
 #endif
 
 #ifdef WII_PLATFORM
@@ -213,6 +216,17 @@ bool PlatformThread::start(Entry entry, void* argument, std::size_t, int priorit
                 SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_ABOVE_NORMAL);
             if (affinityMask != 0)
                 SetThreadAffinityMask(GetCurrentThread(), static_cast<DWORD_PTR>(affinityMask));
+#elif defined(VITA_PLATFORM)
+            (void)affinityMask;
+            const int defaultPriority = 0x10000100;
+            int vitaPriority = defaultPriority;
+            if (priority < 64)
+                vitaPriority = defaultPriority + 16;
+            else if (priority > 64)
+                vitaPriority = defaultPriority - 8;
+            sceKernelChangeThreadPriority(sceKernelGetThreadId(), vitaPriority);
+            sceKernelChangeThreadCpuAffinityMask(sceKernelGetThreadId(),
+                SCE_KERNEL_CPU_MASK_USER_1 | SCE_KERNEL_CPU_MASK_USER_2);
 #else
             (void)priority;
             (void)affinityMask;
