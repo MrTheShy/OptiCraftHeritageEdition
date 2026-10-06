@@ -1320,7 +1320,11 @@ void EntityRenderer::updateCameraAndRender(float partialTicks)
     }
     else if (mc->gameSettings->limitFramerate == 2)
     {
+#ifdef VITA_PLATFORM
+        fpsLimitChar = 30;
+#else
         fpsLimitChar = '(';  // ~40 fps
+#endif
     }
     // [FIX CRÍTICO WII] Prevenir división por cero si fpsLimitChar es '\0' (0).
     // Si limitFramerate es 0 (ilimitado) o tiene un valor anómalo, establecemos 120L para evitar congelamiento fatal en PowerPC.
