@@ -1326,6 +1326,9 @@ void EntityRenderer::updateCameraAndRender(float partialTicks)
 #if PLATFORM_PS2
         renderSetLegacyPresentationGamma(mc->gameSettings != nullptr && mc->gameSettings->legacyLook);
 #endif
+#ifdef VITA_PLATFORM
+        legacyLookBeginWorld(mc);
+#endif
         if (mc->gameSettings->limitFramerate == 0)
         {
             renderWorld(partialTicks, 0);

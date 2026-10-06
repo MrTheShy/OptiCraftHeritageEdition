@@ -17,6 +17,144 @@
 
 namespace
 {
+#ifdef VITA_PLATFORM
+constexpr float kVitaGammaStrength = 0.35f;
+
+GLuint g_vitaFramebuffer = 0;
+GLuint g_vitaDepthbuffer = 0;
+int g_vitaColorTexture = 0;
+int g_vitaTargetWidth = 0;
+int g_vitaTargetHeight = 0;
+bool g_vitaWorldActive = false;
+
+void releaseVitaTarget()
+{
+    if (g_vitaFramebuffer != 0)
+        glDeleteFramebuffers(1, &g_vitaFramebuffer);
+    if (g_vitaDepthbuffer != 0)
+        glDeleteRenderbuffers(1, &g_vitaDepthbuffer);
+    if (g_vitaColorTexture != 0)
+        renderDeleteTextures(1, &g_vitaColorTexture);
+    g_vitaFramebuffer = 0;
+    g_vitaDepthbuffer = 0;
+    g_vitaColorTexture = 0;
+    g_vitaTargetWidth = 0;
+    g_vitaTargetHeight = 0;
+}
+
+bool ensureVitaTarget(int width, int height)
+{
+    if (g_vitaFramebuffer != 0 && g_vitaTargetWidth == width && g_vitaTargetHeight == height)
+        return true;
+
+    releaseVitaTarget();
+
+    renderGenerateTextures(1, &g_vitaColorTexture);
+    if (g_vitaColorTexture == 0)
+        return false;
+    renderBindTexture(g_vitaColorTexture);
+    renderTextureImageRgba(0, width, height, nullptr);
+    renderTextureParameters(false, false, true);
+
+    glGenRenderbuffers(1, &g_vitaDepthbuffer);
+    glBindRenderbuffer(GL_RENDERBUFFER, g_vitaDepthbuffer);
+    glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH24_STENCIL8, width, height);
+
+    glGenFramebuffers(1, &g_vitaFramebuffer);
+    glBindFramebuffer(GL_FRAMEBUFFER, g_vitaFramebuffer);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, static_cast<GLuint>(g_vitaColorTexture), 0);
+    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, g_vitaDepthbuffer);
+    const bool complete = glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+    if (!complete)
+    {
+        releaseVitaTarget();
+        return false;
+    }
+
+    g_vitaTargetWidth = width;
+    g_vitaTargetHeight = height;
+    return true;
+}
+
+void drawVitaTargetQuad()
+{
+    Tessellator *tess = &Tessellator::instance;
+    tess->startDrawingQuads();
+    tess->addVertexWithUV(0.0, 0.0, 0.0, 0.0, 0.0);
+    tess->addVertexWithUV(1.0, 0.0, 0.0, 1.0, 0.0);
+    tess->addVertexWithUV(1.0, 1.0, 0.0, 1.0, 1.0);
+    tess->addVertexWithUV(0.0, 1.0, 0.0, 0.0, 1.0);
+    tess->draw();
+}
+
+void vitaBeginWorld(Minecraft *mc)
+{
+    g_vitaWorldActive = false;
+    if (mc == nullptr || mc->gameSettings == nullptr || !mc->gameSettings->legacyLook)
+    {
+        if (g_vitaFramebuffer != 0)
+            releaseVitaTarget();
+        return;
+    }
+    if (mc->displayWidth <= 0 || mc->displayHeight <= 0)
+        return;
+    if (!ensureVitaTarget(mc->displayWidth, mc->displayHeight))
+        return;
+
+    glBindFramebuffer(GL_FRAMEBUFFER, g_vitaFramebuffer);
+    g_vitaWorldActive = true;
+}
+
+void vitaCompositeWorld()
+{
+    if (!g_vitaWorldActive)
+        return;
+    g_vitaWorldActive = false;
+
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+    renderDisable(RenderCapability::DepthTest);
+    renderDepthMask(false);
+    renderDisable(RenderCapability::AlphaTest);
+    renderDisable(RenderCapability::Fog);
+    renderDisable(RenderCapability::Lighting);
+    renderEnable(RenderCapability::Texture2D);
+
+    renderMatrixMode(RenderMatrixMode::Projection);
+    renderPushMatrix();
+    renderLoadIdentity();
+    renderOrtho(0.0, 1.0, 0.0, 1.0, -1.0, 1.0);
+    renderMatrixMode(RenderMatrixMode::ModelView);
+    renderPushMatrix();
+    renderLoadIdentity();
+
+    renderBindTexture(g_vitaColorTexture);
+    renderDisable(RenderCapability::Blend);
+    renderColor4f(1.0f, 1.0f, 1.0f, 1.0f);
+    drawVitaTargetQuad();
+
+    renderEnable(RenderCapability::Blend);
+    renderBlendFunc(RenderBlendFactor::OneMinusDstColor, RenderBlendFactor::One);
+    renderColor4f(kVitaGammaStrength, kVitaGammaStrength, kVitaGammaStrength, 1.0f);
+    drawVitaTargetQuad();
+    renderBlendFunc(RenderBlendFactor::SrcAlpha, RenderBlendFactor::OneMinusSrcAlpha);
+    renderDisable(RenderCapability::Blend);
+
+    renderMatrixMode(RenderMatrixMode::ModelView);
+    renderPopMatrix();
+    renderMatrixMode(RenderMatrixMode::Projection);
+    renderPopMatrix();
+    renderMatrixMode(RenderMatrixMode::ModelView);
+
+    renderColor4f(1.0f, 1.0f, 1.0f, 1.0f);
+    renderDepthMask(true);
+    renderEnable(RenderCapability::AlphaTest);
+    renderEnable(RenderCapability::DepthTest);
+}
+#endif
+
 #if PLATFORM_PC
 int g_gradeTexture = 0;
 int g_gradeTextureWidth = 0;
@@ -167,6 +305,9 @@ bool checkShader(GLuint shader, const char *label)
 
 bool ensureGammaShader()
 {
+#ifdef VITA_PLATFORM
+    return false;
+#endif
     if (g_gammaProgram != 0)
         return true;
     if (g_gammaInitAttempted)
@@ -252,8 +393,22 @@ bool ensureGammaShader()
 #endif
 }
 
+void legacyLookBeginWorld(Minecraft *mc)
+{
+#ifdef VITA_PLATFORM
+    vitaBeginWorld(mc);
+#else
+    (void)mc;
+#endif
+}
+
 void legacyLookApplyWorldGrade(Minecraft *mc)
 {
+#ifdef VITA_PLATFORM
+    (void)mc;
+    vitaCompositeWorld();
+    return;
+#endif
 #if PLATFORM_WII
     if (mc != nullptr && mc->gameSettings != nullptr && mc->gameSettings->legacyLook)
         renderSetLegacyPresentationGamma(true);
