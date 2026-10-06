@@ -5,6 +5,9 @@
 #include "java/File.h"
 #include "platform/Storage.h"
 #include "platform/Log.h"
+#ifdef VITA_PLATFORM
+#include "GameResources.h"
+#endif
 
 #ifdef PS2_PLATFORM
 #include "ps2/storage/assets/Ps2Assets.h"
@@ -223,6 +226,14 @@ void SkinManager::init()
     s_defaultSkins.push_back({"Stampy", "Stampy", "/skins/Stampy.png", "/skins/Stampy_32.png", "/skins/Stampy_Front.png", false, ""});
     s_defaultSkins.push_back({"Crocodile", "Crocodile", "/skins/Crocodile.png", "/skins/Crocodile_32.png", "/skins/Crocodile_Front.png", false, ""});
     s_defaultSkins.push_back({"LegacySquid", "Legacy Squid", "/skins/LegacySquid.png", "/skins/LegacySquid_32.png", "/skins/LegacySquid_Front.png", false, ""});
+
+#ifdef VITA_PLATFORM
+    s_defaultSkins.erase(std::remove_if(s_defaultSkins.begin(), s_defaultSkins.end(),
+        [](const SkinEntry &skin)
+        {
+            return skin.id != "LegacySteve" && GameResources::resolve(skin.modelPath).empty();
+        }), s_defaultSkins.end());
+#endif
 
     s_initialized = true;
 

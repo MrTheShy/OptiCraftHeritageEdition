@@ -35,6 +35,7 @@
 #include "NBTTagCompound.h"
 #include "Potion.h"
 #include "PotionEffect.h"
+#include "RenderEngine.h"
 
 EntityPlayerSP::EntityPlayerSP(Minecraft *minecraft, World *world, Session *session, int_t i)
 	: EntityPlayer(world)
@@ -57,7 +58,7 @@ EntityPlayerSP::EntityPlayerSP(Minecraft *minecraft, World *world, Session *sess
 	}
 
 	const std::string activeSkin = SkinManager::getActiveSkinTexture();
-	if (!activeSkin.empty())
+	if (!activeSkin.empty() && (mc == nullptr || mc->renderEngine == nullptr || mc->renderEngine->hasResource(activeSkin)))
 	{
 		texture = activeSkin;
 		skinUrl = "";
