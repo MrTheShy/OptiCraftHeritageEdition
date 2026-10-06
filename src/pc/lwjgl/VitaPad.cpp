@@ -12,6 +12,9 @@
 #include "lwjgl/Keyboard.h"
 #include "lwjgl/Mouse.h"
 
+#include "client/Minecraft.h"
+#include "net/minecraft/src/GameSettings.h"
+
 namespace lwjgl
 {
 namespace VitaPad
@@ -97,6 +100,12 @@ Action wheel(int delta)
 	return action;
 }
 
+bool legacyCrafting()
+{
+	Minecraft *mc = Minecraft::getMinecraft();
+	return mc != nullptr && mc->gameSettings != nullptr && mc->gameSettings->legacyCrafting;
+}
+
 Action actionFor(int input, bool inGame, bool pointerMode)
 {
 	if (inGame)
@@ -105,7 +114,7 @@ Action actionFor(int input, bool inGame, bool pointerMode)
 		{
 			case InputCross: return key(SDLK_SPACE);
 			case InputCircle: return key(SDLK_q);
-			case InputSquare: return key(SDLK_e);
+			case InputSquare: return key(legacyCrafting() ? SDLK_c : SDLK_e);
 			case InputTriangle: return key(SDLK_e);
 			case InputLTrigger: return mouseButton(SDL_BUTTON_RIGHT);
 			case InputRTrigger: return mouseButton(SDL_BUTTON_LEFT);
@@ -130,14 +139,10 @@ Action actionFor(int input, bool inGame, bool pointerMode)
 		case InputCircle: return key(SDLK_ESCAPE);
 		case InputTriangle: return key(SDLK_e);
 		case InputStart: return key(SDLK_ESCAPE);
-		case InputUp:
-		case InputStickUp: return key(SDLK_UP);
-		case InputDown:
-		case InputStickDown: return key(SDLK_DOWN);
-		case InputLeft:
-		case InputStickLeft: return key(SDLK_LEFT);
-		case InputRight:
-		case InputStickRight: return key(SDLK_RIGHT);
+		case InputUp: return key(SDLK_UP);
+		case InputDown: return key(SDLK_DOWN);
+		case InputLeft: return key(SDLK_LEFT);
+		case InputRight: return key(SDLK_RIGHT);
 		default: return Action();
 	}
 }
@@ -226,8 +231,8 @@ float cursorAxis(int value, float seconds)
 
 void moveCursor(const SceCtrlData &pad, float seconds)
 {
-	const float dx = cursorAxis(pad.rx, seconds);
-	const float dy = cursorAxis(pad.ry, seconds);
+	const float dx = cursorAxis(pad.lx, seconds);
+	const float dy = cursorAxis(pad.ly, seconds);
 	if (dx == 0.0f && dy == 0.0f)
 		return;
 
@@ -324,7 +329,7 @@ void poll()
 	{
 		if (pressed[i] && !g_previous[i])
 		{
-			if (!g_grabbed && i >= InputUp)
+			if (!g_grabbed && i >= InputUp && i <= InputRight)
 				g_pointerMode = false;
 			g_active[i] = actionFor(i, g_grabbed, g_pointerMode);
 			begin(g_active[i]);

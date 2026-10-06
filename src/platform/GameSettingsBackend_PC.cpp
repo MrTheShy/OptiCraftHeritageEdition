@@ -24,6 +24,13 @@ void platformGameSettingsApplyLegacyCrafting(GameSettings& settings)
 			settings.keyBindCrafting->keyCode = 0;
 		}
 	}
+#ifdef VITA_PLATFORM
+	if (settings.ofKeyBindZoom != nullptr)
+	{
+		settings.ofKeyBindZoom->keyCode = 0;
+		KeyBinding::resetKeyBindingArrayAndHash();
+	}
+#endif
 }
 
 void platformGameSettingsInitialize(GameSettings& settings)
