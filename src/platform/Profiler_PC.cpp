@@ -3,6 +3,7 @@
 std::uint32_t platformProfileRenderPhaseBegin() { return 0; }
 void platformProfileRenderPhaseEnd(std::uint32_t, PlatformRenderPhase) {}
 void platformProfileTickPhase(const char*, long long) {}
+void platformProfileSlowItem(PlatformSlowItemGroup, const char*, long long) {}
 void platformProfileChunkBuild(long long, int) {}
 void platformProfileChunkMeshPass(int, long long, int) {}
 void platformProfileSnowColumn(bool, bool, int) {}

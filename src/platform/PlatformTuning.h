@@ -11,3 +11,4 @@
 #include "platform/tuning/PlatformWiiTuning.h"
 #include "platform/tuning/PlatformClientTuning.h"
 #include "platform/tuning/PlatformAsyncTuning.h"
+#include "platform/tuning/PlatformVitaTuning.h"

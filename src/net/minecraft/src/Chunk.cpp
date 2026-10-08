@@ -1,3 +1,4 @@
+#include "platform/Profiler.h"
 #include "Chunk.h"
 
 #include <algorithm>
@@ -552,6 +553,7 @@ void Chunk::generateSkylightMap(const std::uint32_t *columnMask)
 				continue;
 			const int_t minY = sectionIndex << 4;
 			const int_t maxY = std::min(minY + 15, WORLD_HEIGHT - 1);
+			platformProfileTickPhase("#dirtySkyInit", 1);
 			worldObj->markBlocksDirty(worldX0, minY, worldZ0, worldX0 + 15, maxY, worldZ0 + 15);
 		}
 	}
@@ -724,6 +726,8 @@ void Chunk::relightBlock(int_t i, int_t j, int_t k)
 		return;
 
 	if (worldObj != nullptr)
+	{
+		platformProfileTickPhase("#dirtyHeight", 1);
 		worldObj->markBlocksDirtyVertical(i, k, newHeight, oldHeight);
 	heightMap[columnIndex] = newHeight;
 

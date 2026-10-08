@@ -33,6 +33,7 @@
 
 #include <limits>
 #include <algorithm>
+#include <typeinfo>
 #include <cmath>
 #include <unordered_set>
 #include <vector>
@@ -3360,6 +3361,16 @@ void World::destroyEntity(Entity *entity)
     deleteWorldOwnedEntity(entity);
 }
 
+#if PLATFORM_PROFILE_RENDER_PHASES
+// typeid(...).name() is Itanium-mangled ("12EntityZombie"); drop the length prefix.
+static const char *profileClassName(const char *mangled)
+{
+    while (*mangled >= '0' && *mangled <= '9')
+        ++mangled;
+    return mangled;
+}
+#endif
+
 void World::updateEntities()
 {
 #if PLATFORM_BOUNDED_PATHFIND
@@ -3446,6 +3457,11 @@ void World::updateEntities()
     platformPhaseStartNs = System::nanoTime();
 #endif
 
+#if PLATFORM_PROFILE_RENDER_PHASES
+    PlatformClassCost classCost; // update time per entity class: "e<Class>"
+    long_t removeNs = 0;          // dead-entity removal: "entRemove"
+    int removeCount = 0;
+#endif
     // Update loaded entities
     for (size_t l = 0; l < loadedEntityList.size(); l++)
     {
@@ -3467,7 +3483,26 @@ void World::updateEntities()
 #if PLATFORM_PS2 && MC_LOG_LEVEL >= 2
             const std::uint32_t entityTickStart = platformProfileRenderPhaseBegin();
 #endif
+#if PLATFORM_PROFILE_RENDER_PHASES
+            // One entity in eight is timed (two clock reads at 1-3 us each
+            // were ~0.5 ms per tick of the "entTick" figure with 150 mobs);
+            // the class costs are scaled by eight.
+            const bool entityTimed = (l & 7) == 0;
+            const long_t entityUpdateStartNs = entityTimed ? System::nanoTime() : 0;
+#endif
             updateEntity(entity);
+#if PLATFORM_PROFILE_RENDER_PHASES
+            // Names the single slowest update of the frame by class, so a
+            // spike in "entities" says "EntityZombie 14 ms" instead of only
+            // "entities". See also entPath / entPathNodes below.
+            if (entityTimed)
+            {
+                const char *mangled = typeid(*entity).name();
+                const long_t ns = System::nanoTime() - entityUpdateStartNs;
+                platformProfileSlowItem(PlatformSlowItemGroup::Entity, profileClassName(mangled), ns);
+                classCost.add(mangled, ns * 8);
+            }
+#endif
 #if PLATFORM_PS2 && MC_LOG_LEVEL == 2
             platformProfileEntityTickWork(entityTickStart, entity);
 #elif PLATFORM_PS2 && MC_LOG_LEVEL > 2
@@ -3477,6 +3512,9 @@ void World::updateEntities()
         
         if (entity->isDead)
         {
+#if PLATFORM_PROFILE_RENDER_PHASES
+            const long_t removeStartNs = System::nanoTime();
+#endif
             int chunkX = entity->chunkCoordX;
             int chunkZ = entity->chunkCoordZ;
             
@@ -3495,11 +3533,27 @@ void World::updateEntities()
             releaseEntitySkin(entity);
             onEntityRemoved(entity);
             destroyEntity(entity);
+#if PLATFORM_PROFILE_RENDER_PHASES
+            removeNs += System::nanoTime() - removeStartNs;
+            removeCount++;
+#endif
         }
     }
     
 #if PLATFORM_PROFILE_RENDER_PHASES
     platformProfileTickPhase("entTick", System::nanoTime() - platformPhaseStartNs);
+    if (removeCount > 0)
+    {
+        platformProfileTickPhase("entRemove", removeNs);
+        platformProfileTickPhase("#entRemove", removeCount);
+    }
+    classCost.flush('e');
+    EntityTickProfile::flush();
+    // A* inside entTick (pathfinding is called from the mob AI), and how many
+    // nodes it expanded: "entPathNodes" is a count, written as if it were
+    // milliseconds (1 node = 1 "ms"), so a read of 450 means 450 nodes.
+    platformProfileTickPhase("entPath", s_profilePathNs);
+    platformProfileTickPhase("entPathNodes", s_profilePathNodes * 1000000LL);
     platformPhaseStartNs = System::nanoTime();
 #endif
 
@@ -4815,7 +4869,14 @@ void World::tick()
     }
 #endif
 
+#if PLATFORM_PROFILE_RENDER_PHASES
+    platformPhaseStartNs = System::nanoTime();
+#endif
     chunkProvider->unload100OldestChunks();
+#if PLATFORM_PROFILE_RENDER_PHASES
+    platformProfileTickPhase("wtUnload", System::nanoTime() - platformPhaseStartNs);
+    platformPhaseStartNs = System::nanoTime();
+#endif
 
     int i = calculateSkylightSubtracted(1.0f);
     if (i != skylightSubtracted)
@@ -4824,6 +4885,11 @@ void World::tick()
         for (size_t j = 0; j < worldAccesses.size(); j++)
             worldAccesses[j]->updateAllRenderers();
     }
+#if PLATFORM_PROFILE_RENDER_PHASES
+    // Day/night step: every renderer is marked dirty when the sky brightness changes.
+    platformProfileTickPhase("wtSkyRend", System::nanoTime() - platformPhaseStartNs);
+    platformPhaseStartNs = System::nanoTime();
+#endif
 
     const long_t time = JavaArithmetic::longAdd(worldInfo->getWorldTime(), 1LL);
 #if !PLATFORM_DISABLE_RUNTIME_AUTOSAVE
@@ -4841,6 +4907,10 @@ void World::tick()
     (void)autosavePeriod;
 #endif
 
+#if PLATFORM_PROFILE_RENDER_PHASES
+    // Autosave (every autosavePeriod ticks) serialises and deflates dirty chunks here.
+    platformProfileTickPhase("wtAutosave", System::nanoTime() - platformPhaseStartNs);
+#endif
     worldInfo->setWorldTime(time);
 #if PLATFORM_PROFILE_RENDER_PHASES
     platformPhaseStartNs = System::nanoTime();
@@ -4867,10 +4937,16 @@ void World::tick()
 #endif
 
     // Vanilla 1.2.5 updates villages after scheduled/random block ticks.
+#if PLATFORM_PROFILE_RENDER_PHASES
+    platformPhaseStartNs = System::nanoTime();
+#endif
     if (villageCollectionObj != nullptr && !multiplayerWorld)
         villageCollectionObj->tick();
     if (villageSiegeObj != nullptr && !multiplayerWorld)
         villageSiegeObj->tick();
+#if PLATFORM_PROFILE_RENDER_PHASES
+    platformProfileTickPhase("wtVillage", System::nanoTime() - platformPhaseStartNs);
+#endif
 }
 
 void World::calculateInitialWeather()
@@ -5075,6 +5151,7 @@ void World::func_48461_r()
             const int_t x = JavaArithmetic::intSub(JavaArithmetic::intAdd(MathHelper::floor_double(player->posX), rand.nextInt(11)), 5);
             const int_t y = JavaArithmetic::intSub(JavaArithmetic::intAdd(MathHelper::floor_double(player->posY), rand.nextInt(11)), 5);
             const int_t z = JavaArithmetic::intSub(JavaArithmetic::intAdd(MathHelper::floor_double(player->posZ), rand.nextInt(11)), 5);
+            PlatformTickPhaseScope probePhase("wProbe");
             updateAllLightTypes(x, y, z);
         }
     }
@@ -5121,7 +5198,18 @@ void World::func_48458_a(int_t chunkOriginX, int_t chunkOriginZ, Chunk *chunk)
 
 void World::updateBlocksAndPlayCaveSounds()
 {
+#if PLATFORM_PROFILE_RENDER_PHASES
+    // Split of the "randomBlocks" tick phase: rtSelect = chunk selection and
+    // player light probe, rtChunk = per-chunk skylight + relight queueing,
+    // rtSnow = ice/snow branch, rtTicks = Block::updateTick calls, rtVisited =
+    // chunks visited this tick (a count written as "ms").
+    long_t rtMarkNs = System::nanoTime();
+    long long rtChunkNs = 0, rtSnowNs = 0, rtTicksNs = 0;
+#endif
     func_48461_r();
+#if PLATFORM_PROFILE_RENDER_PHASES
+    platformProfileTickPhase("rtSelect", System::nanoTime() - rtMarkNs);
+#endif
 
 #if PLATFORM_CACHE_RANDOM_TICK_CHUNKS
     const size_t totalChunks = positionsToUpdateOrder.size();
@@ -5206,8 +5294,14 @@ void World::updateBlocksAndPlayCaveSounds()
         if (!chunkProvider->chunkExists(pairChunkX, pairChunkZ))
             continue;
 #endif
+#if PLATFORM_PROFILE_RENDER_PHASES
+        rtMarkNs = System::nanoTime();
+#endif
         Chunk* chunk = getChunkFromChunkCoords(pairChunkX, pairChunkZ);
         func_48458_a(chunkX, chunkZ, chunk);
+#if PLATFORM_PROFILE_RENDER_PHASES
+        rtChunkNs += System::nanoTime() - rtMarkNs;
+#endif
 
 
         if (rand.nextInt(0x186a0) == 0 && isRaining() && isThundering())
@@ -5227,6 +5321,9 @@ void World::updateBlocksAndPlayCaveSounds()
         
         if (rand.nextInt(16) == 0)
         {
+#if PLATFORM_PROFILE_RENDER_PHASES
+            rtMarkNs = System::nanoTime();
+#endif
 #if PLATFORM_RANDOM_TICK_PROFILE_INTERVAL > 0
             profMark = System::nanoTime();
 #endif
@@ -5247,10 +5344,16 @@ void World::updateBlocksAndPlayCaveSounds()
 #if PLATFORM_RANDOM_TICK_PROFILE_INTERVAL > 0
             profSnowNs += System::nanoTime() - profMark;
 #endif
+#if PLATFORM_PROFILE_RENDER_PHASES
+            rtSnowNs += System::nanoTime() - rtMarkNs;
+#endif
         }
 
 #if PLATFORM_RANDOM_TICK_PROFILE_INTERVAL > 0
         profMark = System::nanoTime();
+#endif
+#if PLATFORM_PROFILE_RENDER_PHASES
+        rtMarkNs = System::nanoTime();
 #endif
         ExtendedBlockStorage **storage = chunk->getBlockStorageArray();
         auto tickRandomBlock = [&](ExtendedBlockStorage *section)
@@ -5268,11 +5371,24 @@ void World::updateBlocksAndPlayCaveSounds()
                 Block *block = Block::blocksList[tickBlockId];
                 if (block != nullptr && Block::tickOnLoad[tickBlockId])
                 {
+#if PLATFORM_PROFILE_RENDER_PHASES
+                    // One hit in eight is timed: two clock reads per hit were
+                    // most of "rtTicks".
+                    static unsigned rtTimedCounter = 0;
+                    const bool rtTimed = (++rtTimedCounter & 7) == 0;
+                    const long_t blockTickStartNs = rtTimed ? System::nanoTime() : 0;
+#endif
                     block->updateTick(this,
                         JavaArithmetic::intAdd(tickX, chunkX),
                         JavaArithmetic::intAdd(tickY, section->getYLocation()),
                         JavaArithmetic::intAdd(tickZ, chunkZ),
                         rand);
+#if PLATFORM_PROFILE_RENDER_PHASES
+                    if (rtTimed)
+                        platformProfileSlowItem(PlatformSlowItemGroup::RandomBlock,
+                                                profileClassName(typeid(*block).name()),
+                                                System::nanoTime() - blockTickStartNs);
+#endif
                 }
             }
         };
@@ -5318,6 +5434,9 @@ void World::updateBlocksAndPlayCaveSounds()
 #endif
 #if PLATFORM_RANDOM_TICK_PROFILE_INTERVAL > 0
         profTicksNs += System::nanoTime() - profMark;
+#endif
+#if PLATFORM_PROFILE_RENDER_PHASES
+        rtTicksNs += System::nanoTime() - rtMarkNs;
 #endif
     }
 

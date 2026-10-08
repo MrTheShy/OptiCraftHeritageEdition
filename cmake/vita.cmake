@@ -26,6 +26,14 @@ set_source_files_properties(${VITA_MINIZIP_SOURCES}
 list(APPEND VITA_SOURCES ${VITA_MINIZIP_SOURCES})
 
 opticraft_select_platform_backends(VITA_SOURCES PC PC PC)
+option(VITA_PROFILER "Per-phase profiler in debug.log (needs MC_LOG_LEVEL > 0)" ON)
+if(MC_LOG_LEVEL GREATER 0 AND VITA_PROFILER)
+    # The Wii profiler is portable: every 10 s it logs frame/tick/render/swap
+    # times and per-phase costs to debug.log. The lines keep the "wii.perf"
+    # tag on the Vita: the backend is shared with the Wii build.
+    list(TRANSFORM VITA_SOURCES REPLACE "(Profiler|ClientProfilerBackend)_PC\\.cpp$" "\\1_WII.cpp")
+    set(VITA_PROFILE_DEFINITIONS PLATFORM_PROFILE_RENDER_PHASES=1 PLATFORM_PROFILE_STREAMING=1)
+endif()
 
 set_source_files_properties(${FDLIBM_SOURCES}
     PROPERTIES COMPILE_DEFINITIONS __LITTLE_ENDIAN
@@ -61,6 +69,7 @@ target_compile_definitions(OptiCraft PRIVATE
     PLATFORM_OPTIFINE_CUSTOM_FONTS=0
     PLATFORM_FAST_REGION_COMPRESSION=1
     MC_LOG_LEVEL=${MC_LOG_LEVEL}
+    ${VITA_PROFILE_DEFINITIONS}
 )
 
 target_include_directories(OptiCraft PRIVATE

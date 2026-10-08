@@ -239,6 +239,7 @@ void ChunkProvider::notifyChunkPublished(Chunk *chunk)
 	// builds detect source availability changes themselves in WorldRenderer.
 	const int_t minX = JavaArithmetic::intMul(chunk->xPosition, 16);
 	const int_t minZ = JavaArithmetic::intMul(chunk->zPosition, 16);
+	platformProfileTickPhase("#dirtyChunkPub", 1);
 	worldObj->markBlocksDirty(minX + 1, 1, minZ + 1,
 	                          minX + 14, 126, minZ + 14);
 #if PLATFORM_PS2

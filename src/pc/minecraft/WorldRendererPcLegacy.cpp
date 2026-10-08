@@ -398,6 +398,17 @@ bool WorldRenderer::pcLegacyBuildRendererStep(int_t blockBudget)
             -static_cast<double>(posY), -static_cast<double>(posZ));
 
         bool stepDrew = false;
+#if PLATFORM_PROFILE_RENDER_PHASES
+        // Walk time by block kind: render types 0-25, other (26), untaken
+        // cubes white (27) and tinted (28). One block in 8 is timed and the
+        // step reports once (x8): a profiler call per block cost more than
+        // a cube.
+        static const char *const kKindNames[] = {"wRT0", "wRT1", "wRT2", "wRT3", "wRT4", "wRT5", "wRT6",
+            "wRT7", "wRT8", "wRT9", "wRT10", "wRT11", "wRT12", "wRT13", "wRT14", "wRT15", "wRT16",
+            "wRT17", "wRT18", "wRT19", "wRT20", "wRT21", "wRT22", "wRT23", "wRT24", "wRT25", "wRTx",
+            "wCubeWhite", "wCubeTint"};
+        long long kindUs[29] = {};
+#endif
         while (pcLegacyBuildCursor < workCount && processed < blockBudget)
         {
             if (processed > 0 &&
@@ -464,10 +475,25 @@ bool WorldRenderer::pcLegacyBuildRendererStep(int_t blockBudget)
                 if (faceMask == 0)
                     continue;
                 stepDrew |= renderblocks.renderSimpleOpaqueCubeLegacy(block, x, y, z, faceMask);
+#if PLATFORM_PROFILE_RENDER_PHASES
+                // Cubes the worker did not take, by colour: white (stone without
+                // the worker) or tinted (grass, leaves).
+                if (timed)
+                    kindUs[blockInfo.defaultWhiteColorMultiplier ? 27 : 28] +=
+                        (long long)(PlatformCompat::getMonotonicMicros() - cubeStartUs);
+#endif
             }
             else
             {
                 stepDrew |= renderblocks.renderBlockByRenderType(block, x, y, z);
+#if PLATFORM_PROFILE_RENDER_PHASES
+                if (timed)
+                {
+                    const int_t renderType = block->getRenderType();
+                    kindUs[renderType >= 0 && renderType < 26 ? renderType : 26] +=
+                        (long long)(PlatformCompat::getMonotonicMicros() - otherStartUs);
+                }
+#endif
             }
         }
 

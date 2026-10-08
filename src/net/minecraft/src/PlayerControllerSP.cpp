@@ -8,6 +8,7 @@
 #include "InventoryPlayer.h"
 #include "ItemStack.h"
 #include "Minecraft.h"
+#include "platform/Profiler.h"
 #include "RenderGlobal.h"
 #include "SoundManager.h"
 #include "StepSound.h"
@@ -55,7 +56,11 @@ bool PlayerControllerSP::sendBlockRemoved(int_t i, int_t j, int_t k, int_t l)
 		}
 	}
 	if (flag && flag1)
+	{
+		// Drops the item entity (spawnEntityInWorld, chunk add) and its sound.
+		PlatformTickPhaseScope phase("inHarvest");
 		Block::blocksList[i1]->harvestBlock(mc->theWorld, mc->thePlayer, i, j, k, j1);
+	}
 	return flag;
 }
 
@@ -146,6 +151,8 @@ void PlayerControllerSP::onWorldChanged(World *world)
 void PlayerControllerSP::updateController()
 {
 	prevBlockDamage = curBlockDamage;
+	// The 45 ms "controller" spike was this call starting a music track.
+	PlatformTickPhaseScope phase("ctlMusic");
 	mc->sndManager->playRandomMusicIfReady();
 }
 

@@ -672,6 +672,9 @@ int_t RenderEngine::getTexture(const std::string &s)
 		return it->second;
 	}
 
+	// First use of a texture reads and decodes it from assets.pak on the
+	// calling thread; shows up in spike.detail when that lands mid-game.
+	PlatformTickPhaseScope loadPhase("texLoad");
 	std::vector<int_t> single(1);
 	GLAllocation::generateTextureNames(single);
 	int_t texture = single[0];
@@ -1783,6 +1786,9 @@ void RenderEngine::updateDynamicTextures()
 		if (specialResult != SpecialTextureFxResult::NotHandled)
 			continue;
 
+#if PLATFORM_PROFILE_RENDER_PHASES
+		const long_t fxStartNs = System::nanoTime();
+#endif
 		if (texturefx->isAnimationEnabled())
 		{
 			texturefx->onTick();
@@ -1793,9 +1799,20 @@ void RenderEngine::updateDynamicTextures()
 		{
 			continue;
 		}
+#if PLATFORM_PROFILE_RENDER_PHASES
+		const long_t fxUploadStartNs = System::nanoTime();
+		fxTickNs += fxUploadStartNs - fxStartNs;
+#endif
 
 		uploadTextureFxTile(texturefx, texture, tileWidth);
+#if PLATFORM_PROFILE_RENDER_PHASES
+		fxUploadNs += System::nanoTime() - fxUploadStartNs;
+#endif
 	}
+#if PLATFORM_PROFILE_RENDER_PHASES
+	platformProfileTickPhase("fxTick", fxTickNs);
+	platformProfileTickPhase("fxUpload", fxUploadNs);
+#endif
 
 	// Preserve the legacy second pass for TextureFX instances targeting their
 	// own texture object instead of the terrain/items atlas. These targets are

@@ -1,3 +1,4 @@
+#include "platform/Log.h"
 #include "PlayerController.h"
 
 #include <cstdio>
@@ -12,6 +13,7 @@
 #include "InventoryPlayer.h"
 #include "ItemStack.h"
 #include "Minecraft.h"
+#include "platform/Profiler.h"
 #include "Session.h"
 #include "World.h"
 #include "WorldProvider.h"
@@ -43,13 +45,25 @@ bool PlayerController::sendBlockRemoved(int_t i, int_t j, int_t k, int_t)
 	Block *block = Block::blocksList[id];
 	if (block == nullptr)
 		return false;
-	printf("[PERF] Block Broken: ID=%d at (%d, %d, %d)\n", (int)block->blockID, (int)i, (int)j, (int)k);
+	MC_LOG_DEBUG("player", "block broken: id=%d at (%d, %d, %d)\n", (int)block->blockID, (int)i, (int)j, (int)k);
 	World::PlayerEditMarkScope editScope(world);
-	world->playAuxSFX(2001, i, j, k, block->blockID + (world->getBlockMetadata(i, j, k) << 12));
+	{
+		// Break sound + (optional) 64 fragments; the sound decode used to land here.
+		PlatformTickPhaseScope phase("inSfx");
+		world->playAuxSFX(2001, i, j, k, block->blockID + (world->getBlockMetadata(i, j, k) << 12));
+	}
 	int_t i1 = world->getBlockMetadata(i, j, k);
-	bool flag = world->setBlockWithNotify(i, j, k, 0);
+	bool flag;
+	{
+		// Block write, light/heightmap bookkeeping, render dirty marks, neighbour updates.
+		PlatformTickPhaseScope phase("inSetBlock");
+		flag = world->setBlockWithNotify(i, j, k, 0);
+	}
 	if (flag)
+	{
+		PlatformTickPhaseScope phase("inDestroyed");
 		block->onBlockDestroyedByPlayer(world, i, j, k, i1);
+	}
 	return flag;
 }
 
@@ -126,6 +140,7 @@ void PlayerController::initializePlayer(EntityPlayer *entityplayer)
 bool PlayerController::sendPlaceBlock(EntityPlayer *entityplayer, World *world, ItemStack *itemstack, int_t i, int_t j, int_t k, int_t l)
 {
 	World::PlayerEditMarkScope editScope(world);
+	PlatformTickPhaseScope phase("inPlace");
 	int_t i1 = world->getBlockId(i, j, k);
 	if (i1 > 0 && Block::blocksList[i1]->blockActivated(world, i, j, k, entityplayer))
 		return true;

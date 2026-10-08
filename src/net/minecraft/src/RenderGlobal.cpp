@@ -443,6 +443,7 @@ void RenderGlobal::changeWorld(World *world)
 
 void RenderGlobal::loadRenderers()
 {
+	const long long lrStartNs = System::nanoTime();
 	Block::leaves->setGraphicsLevel(Config::isTreesFancy());
 	renderDistance = mc->gameSettings->renderDistance;
 	worldRenderersToUpdate.clear();
@@ -464,6 +465,7 @@ void RenderGlobal::loadRenderers()
 		delete[] worldRenderers;
 		delete[] sortedWorldRenderers;
 	}
+	const long long lrFreedNs = System::nanoTime();
 
 #if PLATFORM_CONSOLE_LOW || PLATFORM_PC_LEGACY
 	// Fixed low-end profile: use a small horizontal/vertical renderer grid.
@@ -553,6 +555,7 @@ void RenderGlobal::loadRenderers()
 		}
 	}
 
+	const long long lrCreatedNs = System::nanoTime();
 	if (worldObj != nullptr)
 	{
 		EntityLiving *entityliving = mc->renderViewEntity;
@@ -569,6 +572,16 @@ void RenderGlobal::loadRenderers()
 	}
 
 	renderEntitiesStartupCounter = 2;
+#ifdef VITA_PLATFORM
+	// Every section is rebuilt from scratch after this (render distance,
+	// vertical distance, terrain shader or Fast Terrain changed).
+	const long long lrEndNs = System::nanoTime();
+	MC_LOG_INFO("render", "loadRenderers %dx%dx%d (%d sections, was %d): %ld ms (free %ld, lists %ld, create %ld, place+sort %ld)\n",
+		(int)renderChunksWide, (int)renderChunksTall, (int)renderChunksDeep, (int)totalRenderers, (int)previousRenderers,
+		(long)((lrEndNs - lrStartNs) / 1000000LL), (long)((lrFreedNs - lrStartNs) / 1000000LL),
+		(long)((lrListsNs - lrFreedNs) / 1000000LL), (long)((lrCreatedNs - lrListsNs) / 1000000LL),
+		(long)((lrEndNs - lrCreatedNs) / 1000000LL));
+#endif
 }
 
 
@@ -666,6 +679,9 @@ void RenderGlobal::renderEntities(Vec3D *vec3d, ICamera *icamera, float f)
 	};
 #else
 	auto reportEntity = [](Entity *, const char *) {};
+#endif
+#if PLATFORM_PROFILE_RENDER_PHASES
+	PlatformClassCost drawCost; // draw time per entity class: "d<Class>"
 #endif
 	for (int_t j = 0; j < (int_t)list.size(); j++)
 	{
@@ -779,8 +795,12 @@ void RenderGlobal::renderEntities(Vec3D *vec3d, ICamera *icamera, float f)
 					entity1->entityId, ps2_gs_queue_used_bytes(), ps2_gs_queue_capacity_bytes(), ps2_gs_queue_overflow_count());
 			}
 #endif
+#if PLATFORM_PROFILE_RENDER_PHASES
+			const long_t drawStartNs = System::nanoTime();
+#endif
 			RenderManager::instance->renderEntity(entity1, f);
 #if PLATFORM_PROFILE_RENDER_PHASES
+			drawCost.add(typeid(*entity1).name(), System::nanoTime() - drawStartNs);
 			platformProfileRenderPhaseEnd(cycEntDraw, PlatformRenderPhase::EntityDraw);
 			platformProfileEntityDraw(cycEntDraw, entity1);
 #endif
@@ -797,14 +817,23 @@ void RenderGlobal::renderEntities(Vec3D *vec3d, ICamera *icamera, float f)
 		}
 	}
 
+#if PLATFORM_PROFILE_RENDER_PHASES
+	drawCost.flush('d');
+#endif
 	RenderHelper::enableStandardItemLighting();
 
 #if PLATFORM_PROFILE_RENDER_PHASES
 	const std::uint32_t cycTileDraw = platformProfileRenderPhaseBegin();
 #endif
+#if PLATFORM_PROFILE_RENDER_PHASES
+	PlatformClassCost tileCost; // lookup + draw time per tile entity class: "t<Class>"
+#endif
 	for (size_t k = 0; k < tileEntities.size(); )
 	{
 		TileEntity *tileEntity = tileEntities[k];
+#if PLATFORM_PROFILE_RENDER_PHASES
+		const long_t tileStartNs = System::nanoTime();
+#endif
 		if (tileEntity == nullptr || tileEntity->isInvalid() || worldObj == nullptr ||
 			worldObj->getBlockTileEntity(tileEntity->xCoord, tileEntity->yCoord, tileEntity->zCoord) != tileEntity)
 		{
@@ -813,9 +842,13 @@ void RenderGlobal::renderEntities(Vec3D *vec3d, ICamera *icamera, float f)
 		}
 
 		TileEntityRenderer::instance.renderTileEntity(tileEntity, f);
+#if PLATFORM_PROFILE_RENDER_PHASES
+		tileCost.add(typeid(*tileEntity).name(), System::nanoTime() - tileStartNs);
+#endif
 		++k;
 	}
 #if PLATFORM_PROFILE_RENDER_PHASES
+	tileCost.flush('t');
 	platformProfileRenderPhaseEnd(cycTileDraw, PlatformRenderPhase::TileEntityDraw);
 #endif
 
@@ -1230,7 +1263,15 @@ int_t RenderGlobal::sortAndRender(EntityLiving *entityliving, int_t i, double d)
 
 #if PLATFORM_PC_LEGACY
 	if (i == 0)
+	{
+#if PLATFORM_PROFILE_RENDER_PHASES
+		const long_t visibilityStartNs = System::nanoTime();
+#endif
 		updatePcLegacySectionVisibility(entityliving);
+#if PLATFORM_PROFILE_RENDER_PHASES
+		platformProfileTickPhase("rgVis", System::nanoTime() - visibilityStartNs);
+#endif
+	}
 #endif
 #if PLATFORM_PS2
 	if (i == 0)
@@ -2571,7 +2612,7 @@ namespace
 			if (t1 > t0)
 			{
 				spentUs += (long long)(t1 - t0);
-#if defined(WII_PLATFORM) && MC_LOG_LEVEL >= 2
+#if (defined(WII_PLATFORM) && MC_LOG_LEVEL >= 2) || (defined(VITA_PLATFORM) && MC_LOG_LEVEL >= 1)
 				platformProfileMesh((long long)(t1 - t0) * 1000LL);
 #endif
 			}
@@ -2889,8 +2930,8 @@ bool RenderGlobal::updateRenderers(EntityLiving *entityliving, bool flag)
 		}
 		if (urgentChunkCount > 0)
 		{
-			printf("[PERF] Urgent meshing queue: %d chunks | Tiempo total remallado: %.2f ms | Vértices generados: %d\n",
-			       urgentChunkCount, (double)urgentSpentUs / 1000.0, urgentVerticesBuilt);
+			MC_LOG_DEBUG("render", "urgent meshing: %d chunks, %.2f ms, %d vertices\n",
+			             urgentChunkCount, (double)urgentSpentUs / 1000.0, urgentVerticesBuilt);
 		}
 	}
 
@@ -3911,7 +3952,11 @@ void RenderGlobal::clearWorldRenderers() // func_28137_f
 #if !PLATFORM_PS2
 void RenderGlobal::renderAllRenderLists(int_t pass, double partialTick)
 {
+#if PLATFORM_PROFILE_RENDER_PHASES && PLATFORM_TERRAIN_VBO_BATCH
+	const long_t renderListsStartNs = System::nanoTime();
+#else
 	(void)pass;
+#endif
 	if (mc != nullptr && mc->entityRenderer != nullptr)
 		mc->entityRenderer->enableLightmap(partialTick);
 	for (int_t i = 0; i < 4; i++)
@@ -3919,6 +3964,11 @@ void RenderGlobal::renderAllRenderLists(int_t pass, double partialTick)
 		if (allRenderLists[i] != nullptr)
 			allRenderLists[i]->render();
 	}
+#if PLATFORM_PROFILE_RENDER_PHASES && PLATFORM_TERRAIN_VBO_BATCH
+	// Submission cost of the terrain draws alone (excludes the visibility walk
+	// and section collection): "terrainDraw0" opaque, "terrainDraw1" translucent.
+	platformProfileTickPhase(pass == 0 ? "terrainDraw0" : "terrainDraw1", System::nanoTime() - renderListsStartNs);
+#endif
 	if (mc != nullptr && mc->entityRenderer != nullptr)
 		mc->entityRenderer->disableLightmap(partialTick);
 }

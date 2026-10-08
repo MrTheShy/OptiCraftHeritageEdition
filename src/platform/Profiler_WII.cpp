@@ -4,6 +4,7 @@
 
 extern "C" void wii_perf_add_render_phase_us(int phase, unsigned int us);
 extern "C" void wii_perf_note_tick_phase(const char* name, long long ns);
+extern "C" void wii_perf_note_slow_item(int group, const char* name, long long ns);
 extern "C" void wii_perf_add_chunk_load_ns(long long ns);
 extern "C" void wii_perf_add_populate_ns(long long ns);
 extern "C" void wii_perf_add_populate_phase_ns(int phase, long long ns);
@@ -28,6 +29,7 @@ void platformProfileRenderPhaseEnd(std::uint32_t start, PlatformRenderPhase phas
 	wii_perf_add_render_phase_us(static_cast<int>(phase), now - start);
 }
 void platformProfileTickPhase(const char* name, long long ns) { wii_perf_note_tick_phase(name, ns); }
+void platformProfileSlowItem(PlatformSlowItemGroup group, const char* name, long long ns) { wii_perf_note_slow_item(static_cast<int>(group), name, ns); }
 void platformProfileChunkBuild(long long, int) {}
 void platformProfileChunkMeshPass(int, long long, int) {}
 void platformProfileSnowColumn(bool, bool, int) {}

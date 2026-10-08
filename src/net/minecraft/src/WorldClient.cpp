@@ -131,11 +131,13 @@ void WorldClient::tick()
 	// interpolation once per tick, including expiration of lightning flashes.
 	// Do not run the base world's server-side weather timers or simulation.
 	updateWeather();
-#endif
+	{
+	PlatformTickPhaseScope skyPhase("wSkyLight");
 	int_t light = calculateSkylightSubtracted(1.0f);
 	if (light != skylightSubtracted)
 	{
 		skylightSubtracted = light;
+		platformProfileTickPhase("#skyChange", 1);
 		for (IWorldAccess *access : worldAccesses) access->updateAllRenderers();
 	}
 
@@ -207,6 +209,7 @@ void WorldClient::tick()
 	trimClientChunkCache();
 #endif
 #endif
+	PlatformTickPhaseScope tailPhase("wTail"); // block changes, unload, random display ticks
 	for (auto it = pendingBlockChanges.begin(); it != pendingBlockChanges.end();)
 	{
 		WorldBlockPositionType *change = *it;
@@ -223,6 +226,8 @@ void WorldClient::tick()
 
 	if (clientChunkProvider != nullptr)
 		clientChunkProvider->unload100OldestChunks();
+	{
+	PlatformTickPhaseScope randomPhase("wRandom");
 	updateBlocksAndPlayCaveSounds();
 #if PLATFORM_PS2 && PLATFORM_MP_DEFERRED_CHUNKS && MC_LOG_LEVEL >= 2
 	// Sample the actual working set without materializing missing chunks.

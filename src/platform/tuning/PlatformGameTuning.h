@@ -523,3 +523,100 @@
 #  define PLATFORM_MP_MAX_CHANGES_PER_CHUNK              256u
 #  define PLATFORM_MP_MAX_DEFERRED_CHANGES               8192u
 #endif
+
+// Wall-clock cuts that exist on no profile unless a platform file opts in
+// (PlatformVitaTuning.h). 0 / unlimited means "off".
+// Microseconds the random block ticks of one world tick may spend before the
+// remaining chunk visits roll over to the next tick (World::updateBlocksAndPlayCaveSounds).
+#ifndef PLATFORM_RANDOM_TICK_BUDGET_US
+#  define PLATFORM_RANDOM_TICK_BUDGET_US                0
+#endif
+// A* nodes all path searches together may expand in one tick when the path
+// limits are on. Each search is still capped by PLATFORM_PATHFIND_MAX_NODES.
+#ifndef PLATFORM_PATHFIND_NODE_BUDGET_PER_TICK
+#  define PLATFORM_PATHFIND_NODE_BUDGET_PER_TICK        0x7fffffff
+#endif
+
+// Scheduled block ticks (World::scheduleBlockUpdate/TickUpdates) check that
+// the chunks under a +-8 block box exist on every call. 1 = remember chunks
+// already found resident until the provider's chunk set changes (topology
+// version); same answers, a few chunk-map lookups fewer per tick.
+#ifndef PLATFORM_CACHE_TICK_CHUNK_EXISTENCE
+#  define PLATFORM_CACHE_TICK_CHUNK_EXISTENCE           0
+#endif
+
+// Adaptive lighting drain (platform/world/LightingFrameBudget.h). While the
+// light queue is longer than one frame's job count, World::updatingLighting()
+// may add up to this many microseconds to PLATFORM_LIGHTING_BUDGET_US; the
+// amount is learned from whether recent frames kept their pacing. 0 = off, the
+// fixed per-frame budget above is the only bound (desktop, PS2, Wii).
+#ifndef PLATFORM_LIGHTING_EXTRA_BUDGET_US
+#  define PLATFORM_LIGHTING_EXTRA_BUDGET_US              0
+#endif
+// "Fastest" lighting option: fixed extra budget, no pacing feedback.
+#ifndef PLATFORM_LIGHTING_FASTEST_BUDGET_US
+#  define PLATFORM_LIGHTING_FASTEST_BUDGET_US            0
+#endif
+// Job-count ceiling while the extra budget is active (the clock is the bound).
+#ifndef PLATFORM_LIGHTING_EXTRA_JOB_CAP
+#  define PLATFORM_LIGHTING_EXTRA_JOB_CAP                4096
+#endif
+// Light cell dedup set size (power of two). The queue holds 10k-36k cells while
+// exploring on Vita; a 4096-slot set evicts most of them and the duplicates are
+// then re-run.
+#ifndef PLATFORM_LIGHTING_CELL_SET_BITS
+#  define PLATFORM_LIGHTING_CELL_SET_BITS                12
+#endif
+// Light queue as one pending bit per cell (platform/world/LightingSectionQueue.h)
+// with vanilla's neighbour test (LightingCellRelax.h), instead of the
+// MetadataChunkBlock vector: exact dedup, nothing dropped at
+// PLATFORM_LIGHTING_QUEUE_HARD_CAP, no population batch boxes. 0 = the vector.
+#ifndef PLATFORM_LIGHTING_SECTION_QUEUE
+#  define PLATFORM_LIGHTING_SECTION_QUEUE                0
+#endif
+// Time per tick for the per-chunk relight checks of the random-tick pass
+// (Chunk::enqueueRelightChecks); 0 = no limit (vanilla). Each chunk stops
+// checking by itself after 512 ticks, so a budget only spreads the work.
+#ifndef PLATFORM_RELIGHT_CHECK_BUDGET_US
+#  define PLATFORM_RELIGHT_CHECK_BUDGET_US               0
+#endif
+// Client relight checks in multiplayer. The server sends block and sky light
+// with every chunk; a server translating from a newer version lights by newer
+// rules, so the 1.2.5 checks find mismatches without end (Vita: a light queue
+// growing by 3k cells a second in the Nether). 1 = vanilla.
+#ifndef PLATFORM_MP_CLIENT_RELIGHT_CHECKS
+#  define PLATFORM_MP_CLIENT_RELIGHT_CHECKS              1
+#endif
+// World::updateLightByType (the per-tick player light probe) queues one cell on
+// the bounded light drain instead of running vanilla's synchronous flood fill
+// (up to 32k cells on the game thread). The light equations are the same, and
+// their fixed point is unique, so the final values do not change; only when.
+// 1 = deferred (PS2), 0 = vanilla.
+// Multiplayer: per-tick time after which Packet50/51 at the head of the receive
+// queue wait for the next tick (NetworkManager::processReadPackets). 0 = off
+// (vanilla: up to 1000 packets a tick).
+#ifndef PLATFORM_NET_CHUNK_DISPATCH_BUDGET_US
+#  define PLATFORM_NET_CHUNK_DISPATCH_BUDGET_US          0
+#endif
+#ifndef PLATFORM_DEFERRED_LIGHT_UPDATES
+#  define PLATFORM_DEFERRED_LIGHT_UPDATES                PLATFORM_CONSOLE_LOW
+#endif
+
+// Chunk meshing on cores 1-2 (pc/render/PcLegacyMeshWorker.h): the plain
+// opaque cubes of a section are meshed by a worker thread while the game
+// thread meshes the rest. Same vertices either way. Vita only: the other
+// PC_LEGACY targets have no spare core. Build with -DPLATFORM_MESH_WORKER=0 to
+// compare against the single-thread path.
+#ifndef PLATFORM_MESH_WORKER
+#  ifdef VITA_PLATFORM
+#    define PLATFORM_MESH_WORKER                         1
+#  else
+#    define PLATFORM_MESH_WORKER                         0
+#  endif
+#endif
+// Debug: also mesh the worker's blocks on the game thread when a job starts and
+// compare the two meshes byte for byte; a mismatch is logged ("mesh" error)
+// and the game-thread mesh is used.
+#ifndef PLATFORM_MESH_WORKER_VERIFY
+#  define PLATFORM_MESH_WORKER_VERIFY                    0
+#endif

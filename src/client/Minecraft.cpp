@@ -1526,6 +1526,7 @@ void Minecraft::clickMouse(int_t i)
 {
     if (i == 0 && leftClickCounter > 0)
         return;
+    PlatformTickPhaseScope clickPhase(i == 0 ? "inClickL" : "inClickR");
     if (i == 0)
         thePlayer->swingItem();
     if (i == 1)
@@ -1705,7 +1706,9 @@ void Minecraft::runTick()
     if (rightClickDelayTimer > 0)
         --rightClickDelayTimer;
 
+    long_t clientPhaseStartNs = System::nanoTime();
     ModManager::getInstance().onTick();
+    ClientProfiler::tickPhase("mods", System::nanoTime() - clientPhaseStartNs);
 
 #if PLATFORM_DEFER_PORTAL_TRANSITION
     if (pendingPortalTransition)
@@ -1805,7 +1808,7 @@ void Minecraft::runTick()
         startCheckHasPaidThread();
     #endif
 
-    long_t clientPhaseStartNs = System::nanoTime();
+    clientPhaseStartNs = System::nanoTime();
     statFileWriter->updateStatsSync();
     ClientProfiler::tickPhase("stats", System::nanoTime() - clientPhaseStartNs);
 
@@ -1834,8 +1837,10 @@ void Minecraft::runTick()
     // PS2 background asset jobs must progress even when a renderer cached the
     // numeric texture ID after the first request. Without this pump, a transient
     // USB/PAK failure could leave the checkerboard bound forever.
+    clientPhaseStartNs = System::nanoTime();
     renderEngine->updateBackgroundTextureLoads();
     renderBindTexture(renderEngine->getTexture("/terrain.png"));
+    ClientProfiler::tickPhase("bgTex", System::nanoTime() - clientPhaseStartNs);
 
     if (!isGamePaused)
     {
@@ -1881,6 +1886,7 @@ void Minecraft::runTick()
 #if PLATFORM_PS2
         ps2SetMenuPad(isScreenOwnedByPlayer2() ? 1 : 0);
 #endif
+        clientPhaseStartNs = System::nanoTime();
         GuiScreen *screenBefore = currentScreen;
         currentScreen->handleInput();
         if (currentScreen != nullptr && currentScreen == screenBefore)
@@ -1889,6 +1895,7 @@ void Minecraft::runTick()
                 currentScreen->guiParticles->updateParticles();
             currentScreen->updateScreen();
         }
+        ClientProfiler::tickPhase("gui", System::nanoTime() - clientPhaseStartNs);
 #if PLATFORM_PS2
         ps2SetMenuPad(0);
 #endif
@@ -2180,7 +2187,11 @@ void Minecraft::runTick()
             ClientProfiler::tickPhase("erTick", System::nanoTime() - clientPhaseStartNs);
         }
         if (!isGamePaused)
+        {
+            clientPhaseStartNs = System::nanoTime();
             renderGlobal->updateClouds();
+            ClientProfiler::tickPhase("clouds", System::nanoTime() - clientPhaseStartNs);
+        }
         if (!isGamePaused)
         {
             if (theWorld->field_27172_i > 0)

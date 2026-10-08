@@ -1630,6 +1630,7 @@ void EntityRenderer::renderSplitScreen(float partialTicks, int64_t renderTimeLim
 
 void EntityRenderer::renderWorld(float partialTicks, int64_t renderTimeLimitNano)
 {
+    PlatformTickPhaseScope worldPhase("rWorld");
     renderEnable(RenderCapability::CullFace);
     renderEnable(RenderCapability::DepthTest);
     
@@ -1641,7 +1642,10 @@ void EntityRenderer::renderWorld(float partialTicks, int64_t renderTimeLimitNano
 #if !PLATFORM_SKIP_BLOCK_SELECTION_BOX || PLATFORM_ENABLE_BLOCK_RAYTRACE
     // PS2 still needs rayTrace for placing/breaking blocks and for the crack overlay.
     // Only the visual selection box is optional.
-    getMouseOver(partialTicks);
+    {
+        PlatformTickPhaseScope mousePhase("rMouseOver");
+        getMouseOver(partialTicks);
+    }
 #else
     mc->objectMouseOver = nullptr;
 #endif
@@ -1899,6 +1903,10 @@ void EntityRenderer::renderWorld(float partialTicks, int64_t renderTimeLimitNano
         const PlatformDrawSnapshot translucentDrawStart = platformProfileDrawSnapshot();
 #endif
 #if !PLATFORM_SIMPLE_TRANSPARENT_TERRAIN
+#if PLATFORM_PROFILE_RENDER_PHASES && PLATFORM_PC_LEGACY
+        // Desktop pass 1 (water, ice; twice with Fancy water) had no timer.
+        const std::uint32_t cycDesktopPass1 = platformProfileRenderPhaseBegin();
+#endif
 #if !PLATFORM_NATIVE_TERRAIN_PIPELINE
         renderBlendFunc(RenderBlendFactor::SrcAlpha, RenderBlendFactor::OneMinusSrcAlpha);
 #endif
@@ -2017,6 +2025,9 @@ void EntityRenderer::renderWorld(float partialTicks, int64_t renderTimeLimitNano
             renderColorMask(true, true, true, true);
         }
 #endif
+#if PLATFORM_PROFILE_RENDER_PHASES && PLATFORM_PC_LEGACY
+        platformProfileRenderPhaseEnd(cycDesktopPass1, PlatformRenderPhase::Translucent);
+#endif
 #else
         // PS2: simple transparent pass (water, ice, glass, portals). No depth
         // peeling or color-mask tricks like the PC path above -- just alpha-blend
@@ -2084,7 +2095,10 @@ void EntityRenderer::renderWorld(float partialTicks, int64_t renderTimeLimitNano
 #if PLATFORM_PS2 && MC_LOG_LEVEL > 2
         const PlatformDrawSnapshot cloudsDrawStart = platformProfileDrawSnapshot();
 #endif
-        renderglobal->renderClouds(partialTicks);
+        {
+            PlatformTickPhaseScope cloudPhase("rClouds");
+            renderglobal->renderClouds(partialTicks);
+        }
 #if PLATFORM_PS2 && MC_LOG_LEVEL > 2
         platformProfileDrawCategory(PlatformDrawCategory::Clouds, cloudsDrawStart);
 #endif

@@ -3,6 +3,7 @@
 
 #include <cctype>
 #include <cstring>
+#include <exception>
 #include <filesystem>
 #include <fstream>
 #include <string>
@@ -17,6 +18,7 @@
 #include "pc/render/PcRenderBackend.h"
 
 #ifdef VITA_PLATFORM
+#include "platform/Log.h"
 #include <psp2/kernel/threadmgr.h>
 #include <psp2/power.h>
 
@@ -125,6 +127,29 @@ int main(int argc, char *argv[])
 	scePowerSetGpuClockFrequency(222);
 	scePowerSetGpuXbarClockFrequency(166);
 	sceKernelChangeThreadCpuAffinityMask(sceKernelGetThreadId(), SCE_KERNEL_CPU_MASK_USER_0);
+#if MC_LOG_LEVEL > 0
+	// No console on the Vita: keep a log beside the assets.
+	McLog::openSessionFile("ux0:data/opticraft");
+	// No sync writes: they reopen the file on the memory card from the main
+	// thread and show up as stutter. Uncaught exceptions still flush below.
+	std::set_terminate([] {
+		try
+		{
+			if (std::exception_ptr e = std::current_exception())
+				std::rethrow_exception(e);
+		}
+		catch (const std::exception &e)
+		{
+			MC_LOG_ERROR("main", "uncaught exception: %s (SDL: %s)\n", e.what(), SDL_GetError());
+		}
+		catch (...)
+		{
+			MC_LOG_ERROR("main", "uncaught non-std exception (SDL: %s)\n", SDL_GetError());
+		}
+		McLog::flush();
+		std::abort();
+	});
+#endif
 #endif
 	if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS | SDL_INIT_TIMER | SDL_INIT_AUDIO) < 0)
 		throw SDLException();

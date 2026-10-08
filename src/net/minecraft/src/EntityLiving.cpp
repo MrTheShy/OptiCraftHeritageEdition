@@ -41,7 +41,52 @@
 #include "StepSound.h"
 #include "Vec3D.h"
 #include "World.h"
+#include "platform/Profiler.h"
 
+#if PLATFORM_PROFILE_RENDER_PHASES
+namespace EntityTickProfile
+{
+bool sampling = false;
+namespace
+{
+// Sampled 1 in 8 because the clock read is not free on Vita; set the mask to 0
+// to time every mob.
+constexpr int kSampleMask = 7;
+enum Slot { Base, Ai, AiTasks, AiNav, AiHelpers, Fluids, Move, Push, SlotCount };
+const char *const kNames[SlotCount] = {"lvBase", "lvAI", "aiTasks", "aiNav", "aiHelpers", "lvFluids", "lvMove", "lvPush"};
+long long g_ns[SlotCount];
+
+struct Phase
+{
+    explicit Phase(int s) : slot(sampling ? s : -1)
+    {
+        if (slot >= 0)
+            start = std::chrono::steady_clock::now();
+    }
+    ~Phase()
+    {
+        if (slot >= 0)
+            g_ns[slot] += std::chrono::duration_cast<std::chrono::nanoseconds>(
+                std::chrono::steady_clock::now() - start).count();
+    }
+    int slot;
+    std::chrono::steady_clock::time_point start;
+};
+}
+
+void flush()
+{
+    for (int i = 0; i < SlotCount; ++i)
+    {
+        platformProfileTickPhase(kNames[i], g_ns[i] * (kSampleMask + 1));
+        g_ns[i] = 0;
+    }
+}
+}
+#define LV_PHASE(slot) EntityTickProfile::Phase lvPhase##slot(EntityTickProfile::slot)
+#else
+#define LV_PHASE(slot) ((void)0)
+#endif
 
 #if PLATFORM_LIMIT_ENTITY_PUSH_COLLISIONS
 namespace
@@ -801,7 +846,14 @@ void EntityLiving::setPositionAndRotation2(double d, double d1, double d2, float
 
 void EntityLiving::onUpdate()
 {
-	Entity::onUpdate();
+#if PLATFORM_PROFILE_RENDER_PHASES
+	EntityTickProfile::sampling = ((entityId + ticksExisted) & EntityTickProfile::kSampleMask) == 0;
+	struct EndSample { ~EndSample() { EntityTickProfile::sampling = false; } } endSample;
+#endif
+	{
+		LV_PHASE(Base);
+		Entity::onUpdate();
+	}
 	if (arrowHitTempCounter > 0)
 	{
 		if (arrowHitTimer <= 0)
@@ -1541,6 +1593,7 @@ void EntityLiving::onLivingUpdate()
 	{
 		if (isAIEnabled())
 		{
+			LV_PHASE(Ai);
 			updateAITasks();
 		}
 		else
@@ -1563,8 +1616,12 @@ void EntityLiving::onLivingUpdate()
 		return;
 	}
 #endif
-	bool flag  = isInWater();
-	bool flag1 = handleLavaMovement();
+	bool flag, flag1;
+	{
+		LV_PHASE(Fluids);
+		flag  = isInWater();
+		flag1 = handleLavaMovement();
+	}
 	if (isJumping)
 	{
 		if (flag)
@@ -1590,7 +1647,10 @@ void EntityLiving::onLivingUpdate()
 	randomYawVelocity *= 0.9f;
 	const float previousLandMovementFactor = landMovementFactor;
 	landMovementFactor *= getSpeedModifier();
-	moveEntityWithHeading(moveStrafing, moveForward);
+	{
+		LV_PHASE(Move);
+		moveEntityWithHeading(moveStrafing, moveForward);
+	}
 	landMovementFactor = previousLandMovementFactor;
 #if PLATFORM_LIMIT_ENTITY_PUSH_COLLISIONS
 	if (!isEntityPushCollisionRelevant(this))
@@ -1598,6 +1658,7 @@ void EntityLiving::onLivingUpdate()
 		return;
 	}
 #endif
+	LV_PHASE(Push);
 	const auto& list = worldObj->getEntitiesWithinAABBExcludingEntity(this, boundingBox->expand(0.20000000298023224, 0.0, 0.20000000298023224));
 	if (list.size() > 0)
 	{
@@ -1867,11 +1928,18 @@ void EntityLiving::updateAITasks()
 #else
 	const bool evaluateTransitions = true;
 #endif
-	targetTasks.onUpdateTasks(evaluateTransitions);
-	tasks.onUpdateTasks(evaluateTransitions);
-	if (navigator != nullptr)
-		navigator->onUpdateNavigation();
+	{
+		LV_PHASE(AiTasks);
+		targetTasks.onUpdateTasks(evaluateTransitions);
+		tasks.onUpdateTasks(evaluateTransitions);
+	}
+	{
+		LV_PHASE(AiNav);
+		if (navigator != nullptr)
+			navigator->onUpdateNavigation();
+	}
 	updateAITick();
+	LV_PHASE(AiHelpers);
 	if (moveHelper != nullptr)
 		moveHelper->onUpdateMoveHelper();
 	if (lookHelper != nullptr)

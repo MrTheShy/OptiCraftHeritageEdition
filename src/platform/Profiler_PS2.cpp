@@ -1,4 +1,5 @@
 #include "platform/Profiler.h"
+#include "platform/PlatformConfig.h"
 
 #include "ps2/system/Ps2Perf.h"
 
@@ -28,7 +29,15 @@ void platformProfileRenderPhaseEnd(std::uint32_t start, PlatformRenderPhase phas
 {
 	ps2_perf_add_render_phase(static_cast<int>(phase), platformPs2Cycles() - start);
 }
-void platformProfileTickPhase(const char* name, long long ns) { ps2_perf_note_tick_phase(name, ns); }
+void platformProfileTickPhase(const char* name, long long ns)
+{
+#if PLATFORM_PROFILE_RENDER_PHASES
+    ps2_perf_note_tick_phase(name, ns);
+#else
+    (void)name; (void)ns; // unguarded "#counter" call sites: no slot scan in builds that never report
+#endif
+}
+void platformProfileSlowItem(PlatformSlowItemGroup, const char*, long long) {}
 void platformProfileChunkBuild(long long ns, int vertices) { ps2_perf_add_chunk_build_ns(ns, vertices); }
 void platformProfileChunkMeshPass(int pass, long long ns, int vertices) { ps2_perf_add_mesh_pass_ns(pass, ns, vertices); }
 void platformProfileSnowColumn(bool icePlaced, bool snowPlaced, int notifyCalls)

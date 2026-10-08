@@ -331,3 +331,15 @@ private:
 	float cachedNearestPlayerDistanceSq;
 #endif
 };
+
+#if PLATFORM_PROFILE_RENDER_PHASES
+// Where a mob tick goes (EntityLiving.cpp): one mob in eight is timed each
+// tick, by phase; World::updateEntities flushes the sums once per tick, scaled
+// by eight, as "lv*"/"ai*" tick phases. (Timing each AI task was dropped: two
+// clock reads per task cost more than most tasks.)
+namespace EntityTickProfile
+{
+extern bool sampling; // the mob being ticked right now is timed
+void flush();
+}
+#endif

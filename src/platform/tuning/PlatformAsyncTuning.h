@@ -61,3 +61,15 @@
 #  define PLATFORM_ASYNC_CHUNK_DECODE                  0
 #  define PLATFORM_ASYNC_NEAREST_FIRST                 0
 #endif
+
+// Generation worker threads, each with its own ChunkProviderGenerate.
+#ifndef PLATFORM_ASYNC_GENERATION_WORKERS
+#  define PLATFORM_ASYNC_GENERATION_WORKERS             1
+#endif
+
+// Saved Anvil chunks are read, inflated and NBT-parsed on the generation
+// worker; the game thread only builds the Chunk. Off by default: without it a
+// saved chunk is loaded synchronously by prepareChunk(). Vita turns it on.
+#ifndef PLATFORM_ASYNC_SAVED_CHUNK_LOAD
+#  define PLATFORM_ASYNC_SAVED_CHUNK_LOAD               0
+#endif

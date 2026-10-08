@@ -20,6 +20,12 @@
 #include <utility>
 #include <vector>
 
+// Per-frame work counters read (and reset) by the profiler backend.
+extern "C" unsigned g_vitaPerfDraws = 0;
+extern "C" unsigned g_vitaPerfTexUploads = 0;
+extern "C" unsigned g_vitaPerfBufferBytes = 0;
+#define VITA_PERF_COUNT(counter, n) (counter += (n))
+
 namespace
 {
 std::vector<std::vector<std::function<void()>>> g_vitaLists(1);

@@ -627,10 +627,16 @@ void GuiIngame::pcLegacyRenderPlayerStatusHud(int_t sw, int_t sh)
 			if (!pcLegacyStatusValid || pcLegacyStatusSignature != signature)
 			{
 				pcLegacyStatusSignature = signature;
+#if PLATFORM_PROFILE_RENDER_PHASES
+				const long_t recordStartNs = System::nanoTime();
+#endif
 				renderBeginDisplayList(pcLegacyHudDisplayLists + 2);
 				renderPlayerStatusHudUncached(sw, sh);
 				renderEndDisplayList();
 				pcLegacyStatusValid = true;
+#if PLATFORM_PROFILE_RENDER_PHASES
+				platformProfileTickPhase("hudRecord", System::nanoTime() - recordStartNs);
+#endif
 			}
 			renderCallDisplayList(pcLegacyHudDisplayLists + 2);
 			return;

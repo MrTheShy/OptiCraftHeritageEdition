@@ -4,6 +4,14 @@
 #include <cstdarg>
 #include <cstring>
 
+#if defined(VITA_PLATFORM) && MC_LOG_LEVEL > 0
+#include <condition_variable>
+#include <mutex>
+#include <string>
+#include <thread>
+#include <psp2/kernel/threadmgr.h>
+#endif
+
 #if PLATFORM_WII
 extern "C" void wiiPlatformLogWrite(const char* line);
 #endif
@@ -84,6 +92,51 @@ void commitFile()
         std::setvbuf(g_logFile, g_fileBuffer, _IOFBF, sizeof(g_fileBuffer));
 }
 
+#ifdef VITA_PLATFORM
+// A write to ux0 stalls for ~370 ms when it lands behind the region writer
+// (profiler reports measured 350-730 ms). The game thread only appends to
+// g_queue; logWriter() owns the file. g_fileMutex guards g_logFile.
+std::mutex g_fileMutex;
+std::mutex g_queueMutex;
+std::condition_variable g_queueWake;
+std::string g_queue;
+bool g_queueCommit = false;
+
+// Caller holds g_fileMutex.
+void drainQueue(std::string& batch)
+{
+    bool commit;
+    {
+        std::lock_guard<std::mutex> lock(g_queueMutex);
+        batch.swap(g_queue);
+        commit = g_queueCommit;
+        g_queueCommit = false;
+    }
+    if (g_logFile && !batch.empty())
+        std::fwrite(batch.data(), 1, batch.size(), g_logFile);
+    batch.clear();
+    if (commit)
+        commitFile();
+    else if (g_logFile)
+        std::fflush(g_logFile);
+}
+
+void logWriter()
+{
+    sceKernelChangeThreadCpuAffinityMask(sceKernelGetThreadId(), SCE_KERNEL_CPU_MASK_USER_2);
+    std::string batch;
+    for (;;)
+    {
+        {
+            std::unique_lock<std::mutex> lock(g_queueMutex);
+            g_queueWake.wait(lock, [] { return !g_queue.empty() || g_queueCommit; });
+        }
+        std::lock_guard<std::mutex> lock(g_fileMutex);
+        drainQueue(batch);
+    }
+}
+#endif
+
 bool isHighFrequencyTrace(McLog::Level level, const char* category)
 {
 #if PLATFORM_PS2
@@ -111,9 +164,22 @@ void writeFile(const char* line, McLog::Level level, const char* category)
     if (!g_logFile || !line)
         return;
 
+    const bool urgent = level == McLog::Level::Error || level == McLog::Level::Warning;
+#ifdef VITA_PLATFORM
+    (void)category;
+    {
+        std::lock_guard<std::mutex> lock(g_queueMutex);
+        // Capped at 1 MB: lines are dropped if the card stops accepting writes.
+        if (g_queue.size() < (1u << 20))
+            g_queue += line;
+        g_queueCommit = g_queueCommit || urgent;
+    }
+    g_queueWake.notify_one();
+    return;
+#endif
+
     std::fputs(line, g_logFile);
 
-    const bool urgent = level == McLog::Level::Error || level == McLog::Level::Warning;
     if (urgent)
     {
         commitFile();
@@ -204,6 +270,9 @@ bool McLog::openSessionFile(const char* directory)
     std::fputs(opened, stdout);
     std::fflush(stdout);
 #endif
+#ifdef VITA_PLATFORM
+    std::thread(logWriter).detach();
+#endif
     return true;
 #else
     (void)directory;
@@ -214,8 +283,18 @@ bool McLog::openSessionFile(const char* directory)
 void McLog::flush()
 {
 #if MC_LOG_LEVEL > 0
+#ifdef VITA_PLATFORM
+    std::lock_guard<std::mutex> lock(g_fileMutex);
+    {
+        std::lock_guard<std::mutex> queueLock(g_queueMutex);
+        g_queueCommit = true;
+    }
+    std::string batch;
+    drainQueue(batch);
+#else
     if (g_logFile)
         commitFile();
+#endif
 #endif
 }
 
