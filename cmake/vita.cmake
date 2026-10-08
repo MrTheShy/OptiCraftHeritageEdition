@@ -41,6 +41,9 @@ set_target_properties(OptiCraft PROPERTIES
 
 target_compile_options(OptiCraft PRIVATE
     -O3
+    -mtune=cortex-a9
+    -ffunction-sections
+    -fdata-sections
     -fno-math-errno
     -fno-trapping-math
     $<$<COMPILE_LANGUAGE:CXX>:-frtti>
@@ -52,6 +55,11 @@ target_compile_definitions(OptiCraft PRIVATE
     PLATFORM_FONT_IMMEDIATE=1
     PC_LEGACY_BUILD=1
     PLATFORM_SOFTWARE_CURSOR=1
+    PLATFORM_LOCAL_RESOURCES_ONLY=1
+    PLATFORM_OPTIFINE_CUSTOM_ANIMATIONS=0
+    PLATFORM_OPTIFINE_RANDOM_MOBS=0
+    PLATFORM_OPTIFINE_CUSTOM_FONTS=0
+    PLATFORM_FAST_REGION_COMPRESSION=1
     MC_LOG_LEVEL=${MC_LOG_LEVEL}
 )
 
@@ -69,7 +77,8 @@ target_include_directories(OptiCraft PRIVATE
     "${CMAKE_SOURCE_DIR}/external/zlib/contrib/minizip"
 )
 
-target_link_options(OptiCraft PRIVATE -Wl,-q)
+# --undefined keeps the segment pad in src/pc/Main.cpp through --gc-sections.
+target_link_options(OptiCraft PRIVATE -Wl,-q -Wl,--gc-sections -Wl,--undefined=g_vitaSegmentPad)
 
 target_link_libraries(OptiCraft PRIVATE
     SDL2_net

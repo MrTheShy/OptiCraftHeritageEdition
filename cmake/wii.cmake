@@ -193,6 +193,8 @@ target_include_directories(OptiCraft PRIVATE
     "${CMAKE_SOURCE_DIR}/src"
     "${CMAKE_SOURCE_DIR}/src/pc"
     "${CMAKE_SOURCE_DIR}/src/wii"
+    "${CMAKE_SOURCE_DIR}/src/net/minecraft/src"
+    "${CMAKE_SOURCE_DIR}/src/mods"
     "${CMAKE_SOURCE_DIR}/external/stb"
     "${CMAKE_SOURCE_DIR}/external/zlib/contrib/minizip"
     "${LIBOGC}/include"

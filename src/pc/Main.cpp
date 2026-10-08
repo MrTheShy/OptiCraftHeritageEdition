@@ -107,6 +107,16 @@ std::string loadUsername()
 }
 }
 
+#ifdef VITA_PLATFORM
+// vita-elf-create fails with "segment 1 overlaps" when the code segment ends
+// less than ~5 KB before a 64 KB boundary. This padding pushes the end past it.
+// If the error comes back after code changes, resize the array
+// (check the segment layout with `arm-vita-eabi-readelf -l`).
+// cmake/vita.cmake links with --undefined=g_vitaSegmentPad so --gc-sections
+// keeps it.
+extern "C" const char g_vitaSegmentPad[28672] __attribute__((used, aligned(4))) = {1};
+#endif
+
 int main(int argc, char *argv[])
 {
 #ifdef VITA_PLATFORM
