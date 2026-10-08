@@ -52,6 +52,8 @@ private:
     int_t posX, posY, posZ;
     bool is2x2Mode;
     EntityPlayer *entityPlayer;
+    // Multiplayer workbench: the server's window, so crafting can go through it.
+    class ContainerWorkbench *serverWorkbench = nullptr;
 
     int_t selectedCategory;
     int_t visibleCategoryIndices[kCategoryCount];

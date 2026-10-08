@@ -1,4 +1,8 @@
 #include "WorldClient.h"
+#include "MathHelper.h"
+#include "NetworkManager.h"
+#include <cstring>
+#include "platform/Profiler.h"
 #include "platform/Log.h"
 #include "WorldSettings.h"
 #include "WorldInfo.h"
@@ -59,11 +63,16 @@ bool inflateDeferredChunkPacket(const std::vector<byte_t> &compressed, int_t pri
     if (compressed.empty() || outputSize == 0)
         return false;
 
-    out.assign(outputSize, 0);
+    // The caller reuses one buffer: no reallocation, and only the bytes zlib
+    // did not write are zeroed (was a full memset of up to 196 KB per column).
+    out.resize(outputSize);
     uLongf actual = static_cast<uLongf>(out.size());
-    return uncompress(reinterpret_cast<Bytef *>(out.data()), &actual,
-                      reinterpret_cast<const Bytef *>(compressed.data()),
-                      static_cast<uLong>(compressed.size())) == Z_OK;
+    const bool ok = uncompress(reinterpret_cast<Bytef *>(out.data()), &actual,
+                               reinterpret_cast<const Bytef *>(compressed.data()),
+                               static_cast<uLong>(compressed.size())) == Z_OK;
+    if (actual < out.size())
+        std::memset(out.data() + actual, 0, out.size() - actual);
+    return ok;
 }
 #endif
 }
@@ -126,10 +135,11 @@ WorldClient::~WorldClient()
 void WorldClient::tick()
 {
 	setWorldTime(JavaArithmetic::longAdd(getWorldTime(), 1LL));
-#if PLATFORM_PS2
 	// This override does not run World::tick(). Advance the client-only weather
 	// interpolation once per tick, including expiration of lightning flashes.
 	// Do not run the base world's server-side weather timers or simulation.
+	// (Was PS2-only: elsewhere prevRainingStrength stayed 0 while raining, so
+	// the sky faded from clear to rain on every tick -- the sky flicker.)
 	updateWeather();
 	{
 	PlatformTickPhaseScope skyPhase("wSkyLight");
@@ -139,6 +149,7 @@ void WorldClient::tick()
 		skylightSubtracted = light;
 		platformProfileTickPhase("#skyChange", 1);
 		for (IWorldAccess *access : worldAccesses) access->updateAllRenderers();
+	}
 	}
 
 	// Packet processing used to happen after the pending-entity retry. On PS2 a
@@ -191,19 +202,35 @@ void WorldClient::tick()
 		}
 	}
 
-#if PLATFORM_WII
-	Minecraft *minecraft = Minecraft::getMinecraft();
-	if (minecraft != nullptr && minecraft->thePlayer != nullptr && minecraft->thePlayer->worldObj == this)
+	// The local player is not ticked while its chunks are missing, but in our
+	// tests CraftBukkit sent queued chunks only in reply to movement packets:
+	// after a teleport both sides waited and the world stayed black. Send the
+	// tick's movement packet from here when the player did not.
+	Minecraft *game = Minecraft::getMinecraft();
+	if (game != nullptr && game->thePlayer != nullptr && game->thePlayer->worldObj == this)
 	{
-		EntityClientPlayerMP *player = dynamic_cast<EntityClientPlayerMP *>(minecraft->thePlayer);
+		EntityClientPlayerMP *player = dynamic_cast<EntityClientPlayerMP *>(game->thePlayer);
 		if (player != nullptr)
 			player->flushMotionUpdatesForWorldTick();
 	}
-#endif
 
 
 #if !(PLATFORM_PS2 && PLATFORM_MP_DEFERRED_CHUNKS)
-	sendQueue->processReadPackets();
+	{
+	PlatformTickPhaseScope packetPhase("wPackets");
+	// No pacing while the player's own column is missing: on joining or
+	// respawning the spawn area arrives at once instead of a chunk a tick.
+	long long chunkBudgetNs = PLATFORM_NET_CHUNK_DISPATCH_BUDGET_US * 1000LL;
+	Minecraft *client = Minecraft::getMinecraft();
+	if (client != nullptr && client->thePlayer != nullptr)
+	{
+		Chunk *own = getChunkFromBlockCoords(MathHelper::floor_double(client->thePlayer->posX),
+		                                     MathHelper::floor_double(client->thePlayer->posZ));
+		if (own == nullptr || own->isEmptyChunk() || !own->hasNetworkData)
+			chunkBudgetNs = 0;
+	}
+	sendQueue->processReadPackets(chunkBudgetNs);
+	}
 #if PLATFORM_MP_DEFERRED_CHUNKS
 	promoteDeferredChunks();
 	trimClientChunkCache();
@@ -229,6 +256,7 @@ void WorldClient::tick()
 	{
 	PlatformTickPhaseScope randomPhase("wRandom");
 	updateBlocksAndPlayCaveSounds();
+	}
 #if PLATFORM_PS2 && PLATFORM_MP_DEFERRED_CHUNKS && MC_LOG_LEVEL >= 2
 	// Sample the actual working set without materializing missing chunks.
 	static unsigned int healthTicks = 0;
@@ -248,11 +276,14 @@ void WorldClient::tick()
 			else ++missing;
 		}
 		MC_LOG_DEBUG("net.chunk", "workingSet center=%d,%d resident=%d pending=%d missingBase=%d"
-			" cache=%zu bytes=%zu evicted=%lu promoted=%lu corrupt=%lu packets=%lu unloads=%lu rain=%d strength=%.3f\n",
+			" cache=%zu bytes=%zu evicted=%lu promoted=%lu corrupt=%lu packets=%lu unloads=%lu rain=%d strength=%.3f"
+			" rx=%zu readQ=%zu\n",
 			(int)cx, (int)cz, resident, pending, missing, deferredChunks.size(), deferredChunkBytes,
 			(unsigned long)deferredChunkEvictions, (unsigned long)deferredChunkPromotions,
 			(unsigned long)deferredChunkCorruptions, sendQueue->getMapChunkCount(),
-			sendQueue->getPreChunkUnloadCount(), worldInfo->getRaining() ? 1 : 0, (double)rainingStrength);
+			sendQueue->getPreChunkUnloadCount(), worldInfo->getRaining() ? 1 : 0, (double)rainingStrength,
+			sendQueue->getNetworkManager() != nullptr ? sendQueue->getNetworkManager()->getSocketReceivedByteCount() : 0,
+			sendQueue->getNetworkManager() != nullptr ? sendQueue->getNetworkManager()->getReadQueuePacketCount() : 0);
 	}
 #endif
 }
@@ -590,7 +621,7 @@ bool WorldClient::promoteDeferredChunk(int_t chunkX, int_t chunkZ)
         return false;
 
     DeferredChunk &entry = it->second;
-    std::vector<byte_t> data;
+    std::vector<byte_t> &data = inflateBuffer;
     if (!inflateDeferredChunkPacket(entry.compressed, entry.primaryMask, true, data))
     {
         forgetDeferredChunk(entry.chunkX, entry.chunkZ);
@@ -820,8 +851,8 @@ bool WorldClient::shouldKeepChunk(int_t chunkX, int_t chunkZ) const
 	if (playerEntities.empty() || playerEntities[0] == nullptr)
 		return false;
 	const EntityPlayer *player = playerEntities[0];
-	const int_t centerX = JavaArithmetic::intShr(JavaArithmetic::doubleToInt(std::floor(player->posX)), 4);
-	const int_t centerZ = JavaArithmetic::intShr(JavaArithmetic::doubleToInt(std::floor(player->posZ)), 4);
+	const int_t centerX = JavaArithmetic::intShr(MathHelper::floor_double(player->posX), 4);
+	const int_t centerZ = JavaArithmetic::intShr(MathHelper::floor_double(player->posZ), 4);
 #if PLATFORM_PS2
 	// The active promotion window is the cache radius. The unload radius is only
 	// hysteresis for columns that were already resident before the player moved;
@@ -843,8 +874,8 @@ void WorldClient::trimClientChunkCache()
 	if (playerEntities.empty() || playerEntities[0] == nullptr || clientChunkProvider == nullptr)
 		return;
 	const EntityPlayer *player = playerEntities[0];
-	const int_t centerX = JavaArithmetic::intShr(JavaArithmetic::doubleToInt(std::floor(player->posX)), 4);
-	const int_t centerZ = JavaArithmetic::intShr(JavaArithmetic::doubleToInt(std::floor(player->posZ)), 4);
+	const int_t centerX = JavaArithmetic::intShr(MathHelper::floor_double(player->posX), 4);
+	const int_t centerZ = JavaArithmetic::intShr(MathHelper::floor_double(player->posZ), 4);
 	clientChunkProvider->unloadOutsideRadius(centerX, centerZ, PLATFORM_CHUNK_UNLOAD_RADIUS);
 #endif
 }

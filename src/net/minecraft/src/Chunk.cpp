@@ -1,5 +1,6 @@
 #include "platform/Profiler.h"
 #include "Chunk.h"
+#include "EnumSkyBlock.h"
 
 #include <algorithm>
 #include <cstdio>
@@ -1601,6 +1602,56 @@ int_t Chunk::setChunkData(byte_t *abyte0, int_t i, int_t j, int_t k,
 	return k1;
 }
 
+bool Chunk::sectionsSkylightAllZero(int_t sectionMask) const
+{
+	bool any = false;
+	for (int_t section = 0; section < SECTION_COUNT; ++section)
+	{
+		if ((sectionMask & (1 << section)) == 0)
+			continue;
+		const ExtendedBlockStorage *storage = storageArrays[section];
+		if (storage == nullptr)
+			continue;
+		const std::vector<byte_t> &light = storage->getSkylightArray().data;
+		for (byte_t b : light)
+			if (b != 0)
+				return false;
+		any = true;
+	}
+	return any;
+}
+
+int_t Chunk::lightFromScratch()
+{
+	generateSkylightMap();
+	for (int_t x = 0; x < 16; ++x)
+		for (int_t z = 0; z < 16; ++z)
+			propagateSkylightOcclusion(x, z);
+	int_t sources = 0;
+	if (worldObj == nullptr)
+		return sources;
+	const int_t baseX = JavaArithmetic::intShl(xPosition, 4);
+	const int_t baseZ = JavaArithmetic::intShl(zPosition, 4);
+	for (int_t section = 0; section < SECTION_COUNT; ++section)
+	{
+		ExtendedBlockStorage *storage = storageArrays[section];
+		if (storage == nullptr)
+			continue;
+		for (int_t y = 0; y < 16; ++y)
+			for (int_t z = 0; z < 16; ++z)
+				for (int_t x = 0; x < 16; ++x)
+				{
+					const int_t id = storage->getExtBlockID(x, y, z);
+					if (id > 0 && id < Block::BLOCK_REGISTRY_SIZE && Block::lightValue[id] > 0)
+					{
+						worldObj->updateLightByType(EnumSkyBlock::Block, baseX + x, (section << 4) + y, baseZ + z);
+						++sources;
+					}
+				}
+	}
+	return sources;
+}
+
 bool Chunk::func_48494_a(const byte_t *bytes, std::size_t length,
 	                    int_t primaryBitMask, int_t addBitMask,
 	                    bool includeBiomeData, std::size_t *bytesConsumed)
@@ -1713,6 +1764,7 @@ bool Chunk::func_48494_a(const byte_t *bytes, std::size_t length,
 	}
 	if (bytesConsumed != nullptr)
 		*bytesConsumed = offset;
+	hasNetworkData = true;
 	return true;
 }
 

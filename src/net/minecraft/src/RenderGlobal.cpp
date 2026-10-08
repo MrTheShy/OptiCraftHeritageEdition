@@ -841,6 +841,16 @@ void RenderGlobal::renderEntities(Vec3D *vec3d, ICamera *icamera, float f)
 			continue;
 		}
 
+		// Vanilla draws every tile entity in range wherever the camera looks.
+		// One block of margin covers a double chest's other half and a sign.
+		if (icamera != nullptr && !icamera->isBoundingBoxInFrustum(AxisAlignedBB::getBoundingBoxFromPool(
+				tileEntity->xCoord - 1.0, tileEntity->yCoord - 1.0, tileEntity->zCoord - 1.0,
+				tileEntity->xCoord + 2.0, tileEntity->yCoord + 2.0, tileEntity->zCoord + 2.0)))
+		{
+			++k;
+			continue;
+		}
+
 		TileEntityRenderer::instance.renderTileEntity(tileEntity, f);
 #if PLATFORM_PROFILE_RENDER_PHASES
 		tileCost.add(typeid(*tileEntity).name(), System::nanoTime() - tileStartNs);

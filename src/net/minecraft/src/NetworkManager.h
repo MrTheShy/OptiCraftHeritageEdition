@@ -32,7 +32,9 @@ public:
 	~NetworkManager();
 
 	void addToSendQueue(Packet *packet);
-	void processReadPackets();
+	// chunkBudgetNs > 0: once this tick's dispatch has used that much time, a
+	// Packet50/51 at the head of the queue waits for the next tick.
+	void processReadPackets(long long chunkBudgetNs = 0);
 	void wakeThreads();
 	void networkShutdown(const std::string &s, const std::vector<std::string> &aobj);
 	void serverShutdown() { closeConnection(); }

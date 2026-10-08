@@ -172,11 +172,11 @@ NetClientHandler::~NetClientHandler()
     mapStorage = nullptr;
 }
 
-void NetClientHandler::processReadPackets()
+void NetClientHandler::processReadPackets(long long chunkBudgetNs)
 {
     if (!disconnected)
     {
-        netManager->processReadPackets();
+        netManager->processReadPackets(chunkBudgetNs);
 #if PLATFORM_PS2 && PLATFORM_MP_DEFERRED_CHUNKS
         // Packet51 bursts can move dozens of compressed columns into the deferred
         // cache in one dispatch. Trim once for the whole batch instead of doing a
@@ -728,10 +728,41 @@ void NetClientHandler::handleMapChunk(Packet51MapChunk* packet)
         return;
     }
 
-    worldClient->markBlocksDirty(
-        JavaArithmetic::intShl(packet->xCh, 4), 0, JavaArithmetic::intShl(packet->zCh, 4),
-        JavaArithmetic::intAdd(JavaArithmetic::intShl(packet->xCh, 4), 15), WorldHeight::HEIGHT,
-        JavaArithmetic::intAdd(JavaArithmetic::intShl(packet->zCh, 4), 15));
+    const int_t minX = JavaArithmetic::intShl(packet->xCh, 4);
+    const int_t minZ = JavaArithmetic::intShl(packet->zCh, 4);
+    // Light the column ourselves when the server sent it without sky light
+    // (see Chunk::sectionsSkylightAllZero). Full columns only: a delta of
+    // underground sections is legitimately dark. The marks below rebuild its meshes.
+    if (packet->includeInitialize && worldClient->worldProvider != nullptr && !worldClient->worldProvider->hasNoSky &&
+        chunk->sectionsSkylightAllZero(packet->yChMin & 0xffff))
+    {
+        const int_t sources = chunk->lightFromScratch();
+        static int s_unlitChunks = 0;
+        if ((++s_unlitChunks & 31) == 1)
+            MC_LOG_INFO("net", "chunk %d,%d arrived with no sky light: lit on the client (%d light sources), %d such chunks so far\n",
+                (int)packet->xCh, (int)packet->zCh, (int)sources, s_unlitChunks);
+    }
+    if (packet->includeInitialize)
+    {
+        // Sections missing from the mask were cleared: the whole column changed.
+        worldClient->markBlocksDirty(minX, 0, minZ, minX + 15, WorldHeight::HEIGHT, minZ + 15);
+    }
+    else
+    {
+        // A delta rewrites only the sections in its primary mask (blocks and
+        // light); the rest of the column is untouched. Mark each run of set
+        // bits once; the +-1 border is added by markBlockRangeNeedsUpdate.
+        const int_t mask = packet->yChMin & 0xffff;
+        for (int_t section = 0; section < 16; ++section)
+        {
+            if ((mask & (1 << section)) == 0)
+                continue;
+            const int_t first = section;
+            while (section + 1 < 16 && (mask & (1 << (section + 1))) != 0)
+                ++section;
+            worldClient->markBlocksDirty(minX, first << 4, minZ, minX + 15, (section << 4) + 15, minZ + 15);
+        }
+    }
 
     if (!packet->includeInitialize || dynamic_cast<WorldProviderSurface *>(worldClient->worldProvider) == nullptr)
         chunk->resetRelightChecks();
@@ -1245,7 +1276,6 @@ void NetClientHandler::handleSetSlot(Packet103SetSlot* packet)
 {
     if (packet == nullptr)
         return;
-
     if (packet->windowId == -1)
     {
         ItemStack *oldStack = mc->thePlayer->inventory->getItemStack();

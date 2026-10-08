@@ -103,7 +103,7 @@ public:
     NetClientHandler(Minecraft* minecraft, const std::string& host, int port);
     ~NetClientHandler();
 
-    void processReadPackets();
+    void processReadPackets(long long chunkBudgetNs = 0);
     
     // Packet handlers - nombres basados en los de Java, renombrando ofuscados
     void handleLogin(Packet1Login* packet);

@@ -520,7 +520,7 @@ std::unique_ptr<std::ostream> createOutputStream(Socket &socket) { return std::m
 
 // The PS2 multiplayer path only needs raw TCP. Keep HTTP/HTTPS disabled so
 // enabling multiplayer does not re-enable desktop resource/auth traffic.
-bool readUrl(const std::string &, std::vector<unsigned char> &) { return false; }
+bool readUrl(const std::string &, std::vector<unsigned char> &, std::size_t) { return false; }
 int getResponseCode(const std::string &) { return -1; }
 bool postUrl(const std::string &, const std::string &, const std::string &,
              std::vector<unsigned char> &) { return false; }

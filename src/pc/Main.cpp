@@ -20,7 +20,10 @@
 #ifdef VITA_PLATFORM
 #include "platform/Log.h"
 #include <psp2/kernel/threadmgr.h>
+#include <psp2/net/net.h>
+#include <psp2/net/netctl.h>
 #include <psp2/power.h>
+#include <psp2/sysmodule.h>
 
 extern "C"
 {
@@ -150,6 +153,25 @@ int main(int argc, char *argv[])
 		std::abort();
 	});
 #endif
+	// Sockets (skin downloads, multiplayer) go through SceNet, which the app
+	// must load and initialise itself: without it the first gethostbyname()
+	// jumps through an unresolved import and the download thread crashes.
+	{
+		static char netMemory[1024 * 1024];
+		int netResult = sceSysmoduleLoadModule(SCE_SYSMODULE_NET);
+		if (netResult >= 0)
+		{
+			SceNetInitParam netParam;
+			netParam.memory = netMemory;
+			netParam.size = sizeof(netMemory);
+			netParam.flags = 0;
+			netResult = sceNetInit(&netParam);
+			if (netResult >= 0)
+				netResult = sceNetCtlInit();
+		}
+		if (netResult < 0)
+			MC_LOG_ERROR("main", "network init failed: 0x%08x\n", (unsigned)netResult);
+	}
 #endif
 	if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS | SDL_INIT_TIMER | SDL_INIT_AUDIO) < 0)
 		throw SDLException();

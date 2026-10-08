@@ -32,7 +32,8 @@ std::unique_ptr<std::ostream> createOutputStream(Socket &socket);
 
 // Small platform layer for Java-like URL/HttpURLConnection operations.
 // The Minecraft port should call this instead of platform APIs directly.
-bool readUrl(const std::string &url, std::vector<unsigned char> &data);
+// http:// reads stop after 15 s in total or past maxBytes.
+bool readUrl(const std::string &url, std::vector<unsigned char> &data, std::size_t maxBytes = 8u * 1024u * 1024u);
 int getResponseCode(const std::string &url);
 bool postUrl(const std::string &url, const std::string &contentType,
              const std::string &body, std::vector<unsigned char> &response);

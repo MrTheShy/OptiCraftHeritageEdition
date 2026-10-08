@@ -71,6 +71,7 @@ void ChunkProviderClient::unloadChunk(int_t i, int_t j)
 	Chunk *chunk = provideChunk(i, j);
 	if (!chunk->isEmptyChunk())
 		chunk->onChunkUnload();
+	forgetLastChunk();
 	if (chunkMapping.erase(ChunkCoordIntPair::chunkXZ2Long(i, j)) != 0)
 		markChunkTopologyChanged();
 	chunkList.erase(std::remove(chunkList.begin(), chunkList.end(), chunk), chunkList.end());
@@ -80,7 +81,10 @@ void ChunkProviderClient::unloadChunk(int_t i, int_t j)
 
 bool ChunkProviderClient::hasChunk(int_t i, int_t j) const
 {
-	return chunkMapping.find(ChunkCoordIntPair::chunkXZ2Long(i, j)) != chunkMapping.end();
+	const ulong_t key = ChunkCoordIntPair::chunkXZ2Long(i, j);
+	if (lastChunk != nullptr && key == lastKey)
+		return true;
+	return chunkMapping.find(key) != chunkMapping.end();
 }
 
 void ChunkProviderClient::unloadOutsideRadius(int_t centerX, int_t centerZ, int_t radius)
@@ -107,6 +111,7 @@ void ChunkProviderClient::unloadOutsideRadius(int_t centerX, int_t centerZ, int_
 Chunk *ChunkProviderClient::prepareChunk(int_t i, int_t j)
 {
 	const ulong_t key = ChunkCoordIntPair::chunkXZ2Long(i, j);
+	forgetLastChunk();
 	auto existing = chunkMapping.find(key);
 	if (existing != chunkMapping.end())
 	{
@@ -133,10 +138,15 @@ Chunk *ChunkProviderClient::prepareChunk(int_t i, int_t j)
 
 Chunk *ChunkProviderClient::provideChunk(int_t i, int_t j)
 {
-	auto it = chunkMapping.find(ChunkCoordIntPair::chunkXZ2Long(i, j));
+	const ulong_t key = ChunkCoordIntPair::chunkXZ2Long(i, j);
+	if (lastChunk != nullptr && key == lastKey)
+		return lastChunk;
+	auto it = chunkMapping.find(key);
 	if (it == chunkMapping.end())
 		return blankChunk;
-	return it->second;
+	lastKey = key;
+	lastChunk = it->second;
+	return lastChunk;
 }
 
 bool ChunkProviderClient::saveChunks(bool flag, IProgressUpdate *iprogressupdate)

@@ -48,6 +48,10 @@ public:
 	long_t creationTimeMillis;
 
 private:
+	// Set by getNewPacket(): received packets skip the typeid map lookup that
+	// getPacketId() otherwise does 4-6 times per packet.
+	int_t cachedPacketId = -1;
+
 	static std::map<int_t, std::function<std::unique_ptr<Packet>()>> packetIdToFactoryMap;
 	static std::map<std::type_index, int_t> packetClassToIdMap;
 	static std::set<int_t> clientPacketIdList;

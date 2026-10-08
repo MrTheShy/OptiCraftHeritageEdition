@@ -58,13 +58,9 @@ public:
 	bool setBlock(int_t x, int_t y, int_t z, int_t blockId) override;
 	bool setBlockAndMetadataAndInvalidate(int_t x, int_t y, int_t z, int_t blockId, int_t metadata);
 	void sendQuittingDisconnectingPacket() override;
-#if PLATFORM_PS2
 	// Server weather events set an instantaneous value. Update both interpolation
 	// endpoints; otherwise every render tick fades from a stale previous value.
 	void setRainStrength(float strength) { World::setRainStrength(strength); }
-#else
-	void setRainStrength(float strength) { rainingStrength = strength; }
-#endif
 
 protected:
 	IChunkProvider *getChunkProvider() override;
@@ -104,6 +100,8 @@ private:
 	std::size_t deferredChunkBytes = 0;
 	std::size_t deferredBlockChangeCount = 0;
 	ulong_t deferredChunkStamp = 0;
+	// Inflate target reused by every promotion; freed with the world.
+	std::vector<byte_t> inflateBuffer;
 	ulong_t deferredChunkEvictions = 0;
 	ulong_t deferredChunkBudgetOverflows = 0;
 	bool deferredChunkBudgetExceeded = false;

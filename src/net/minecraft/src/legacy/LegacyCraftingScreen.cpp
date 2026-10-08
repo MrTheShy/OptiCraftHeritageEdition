@@ -12,6 +12,12 @@
 #include "net/minecraft/src/InventoryPlayer.h"
 #include "net/minecraft/src/EntityPlayer.h"
 #include "net/minecraft/src/World.h"
+#include "net/minecraft/src/ContainerWorkbench.h"
+#include "net/minecraft/src/EntityClientPlayerMP.h"
+#include "net/minecraft/src/NetClientHandler.h"
+#include "net/minecraft/src/Packet101CloseWindow.h"
+#include "net/minecraft/src/PlayerController.h"
+#include "net/minecraft/src/Slot.h"
 #include "net/minecraft/src/Minecraft.h"
 #include "net/minecraft/src/FontRenderer.h"
 #include "net/minecraft/src/RenderEngine.h"
@@ -1553,6 +1559,14 @@ LegacyCraftingScreen::LegacyCraftingScreen(InventoryPlayer *playerInventory, Wor
 {
     initStaticRecipes();
 
+    // On a server the table's window is opened by Packet100, which stamps its
+    // id on player->craftingInventory right after this screen is shown.
+    if (!is2x2 && worldObj != nullptr && worldObj->multiplayerWorld && player != nullptr)
+    {
+        serverWorkbench = new ContainerWorkbench(playerInventory, worldObj, x, y, z);
+        player->craftingInventory = serverWorkbench;
+    }
+
     for (int i = 0; i < 9; ++i)
         m_cachedSlotHasIngredient[i] = true;
 
@@ -1634,6 +1648,88 @@ void LegacyCraftingScreen::initGui()
 void LegacyCraftingScreen::onGuiClosed()
 {
     GuiScreen::onGuiClosed();
+    if (world == nullptr || !world->multiplayerWorld || entityPlayer == nullptr)
+        return;
+    // Tell the server the window is gone (Java's closeScreen does), then give
+    // the player its own container back.
+    if (EntityClientPlayerMP *mp = dynamic_cast<EntityClientPlayerMP *>(entityPlayer))
+        mp->sendQueue->addToSendQueue(new Packet101CloseWindow(
+            serverWorkbench != nullptr ? serverWorkbench->windowId : 0));
+    if (serverWorkbench != nullptr)
+    {
+        if (entityPlayer->craftingInventory == serverWorkbench)
+            entityPlayer->craftingInventory = entityPlayer->inventorySlots;
+        delete serverWorkbench;
+        serverWorkbench = nullptr;
+    }
+}
+
+namespace
+{
+// Crafts `recipe` through the real container with the same clicks a player
+// would make (one item into each grid cell, then shift-click the result), so a
+// server sees and validates it. Container slots: 0 result, then the grid
+// (gridDim x gridDim), then main inventory 9-35, then the hotbar.
+bool craftThroughContainer(Minecraft *mc, EntityPlayer *player, InventoryPlayer *inventory,
+                           Container *container, int_t gridDim, const RecipeVariant &recipe)
+{
+    if (mc == nullptr || mc->playerController == nullptr || player == nullptr || container == nullptr ||
+        inventory == nullptr || inventory->getItemStack() != nullptr || recipe.gridWidth <= 0)
+        return false;
+    const int_t windowId = container->windowId;
+    const int_t mainBase = gridDim == 3 ? 1 : 0;      // main inventory slot s -> s + mainBase
+    const int_t hotbarBase = gridDim == 3 ? 37 : 36;  // hotbar slot s -> hotbarBase + s
+    auto click = [&](int_t slot, int_t button, bool shift)
+    {
+        delete mc->playerController->windowClick(windowId, slot, button, shift, player);
+    };
+    auto wantedDamage = [&](int_t cell)
+    {
+        for (int_t i = 0; i < recipe.ingredientCount; ++i)
+            if (recipe.ingredients[i].itemId == recipe.gridItemIds[cell])
+                return recipe.ingredients[i].itemDamage;
+        return recipe.gridItemDamage[cell];
+    };
+
+    bool placedAny = false;
+    for (int_t cell = 0; cell < 9; ++cell)
+    {
+        const int_t itemId = recipe.gridItemIds[cell];
+        if (itemId <= 0)
+            continue;
+        const int_t row = cell / recipe.gridWidth;
+        const int_t column = cell % recipe.gridWidth;
+        if (row >= gridDim || column >= gridDim)
+            return false;
+        const int_t damage = wantedDamage(cell);
+        int_t source = -1;
+        for (int_t s = 0; s < 36 && source < 0; ++s)
+        {
+            ItemStack *st = inventory->mainInventory[s];
+            if (st != nullptr && st->isValid() && st->itemID == itemId &&
+                (damage == -1 || st->getItemDamage() == damage))
+                source = s < 9 ? hotbarBase + s : mainBase + s;
+        }
+        if (source < 0)
+            break;
+        click(source, 0, false);                         // pick the stack up
+        click(1 + row * gridDim + column, 1, false);     // drop one into the cell
+        if (inventory->getItemStack() != nullptr)
+            click(source, 0, false);                     // put the rest back
+        placedAny = true;
+    }
+
+    if (placedAny)
+        click(0, 0, true);                               // take the result
+    // Anything left in the grid (no match) goes back to the inventory.
+    for (int_t cell = 1; cell <= gridDim * gridDim; ++cell)
+    {
+        Slot *slot = container->getSlot(cell);
+        if (slot != nullptr && slot->getHasStack())
+            click(cell, 0, true);
+    }
+    return placedAny;
+}
 }
 
 void LegacyCraftingScreen::ensureSelectionVisible()
@@ -1828,6 +1924,20 @@ void LegacyCraftingScreen::craftCurrentRecipe()
     const int_t var = selectedVariant[cat][grp];
     if (var < 0 || var >= cats[cat].groups[grp].variantCount) return;
     const RecipeVariant &recipe = cats[cat].groups[grp].variants[var];
+
+    // On a server the inventory is the server's: editing it locally made items
+    // that did not exist there. Craft through the open container instead.
+    if (world != nullptr && world->multiplayerWorld)
+    {
+        EntityPlayer *p = entityPlayer ? entityPlayer : (mc ? static_cast<EntityPlayer*>(mc->thePlayer) : nullptr);
+        Container *container = is2x2Mode ? (p != nullptr ? p->inventorySlots : nullptr) : serverWorkbench;
+        const bool crafted = craftThroughContainer(mc, p, inventory, container, is2x2Mode ? 2 : 3, recipe);
+        inventory->inventoryChanged = true;
+        updateCraftingState();
+        if (mc != nullptr && mc->sndManager != nullptr)
+            mc->sndManager->playSoundFX(crafted ? "random.pop" : "note.bass", 1.0f, crafted ? 1.0f : 0.8f);
+        return;
+    }
 
     // Deduct ingredients
     for (int_t i = 0; i < recipe.ingredientCount; ++i)

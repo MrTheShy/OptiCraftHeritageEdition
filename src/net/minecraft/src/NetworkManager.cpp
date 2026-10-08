@@ -14,9 +14,12 @@
 
 #include "NetHandler.h"
 #include "Packet.h"
+#include "Packet50PreChunk.h"
 #include "java/JavaNetwork.h"
 #include "java/Arithmetic.h"
 #include "java/System.h"
+#include "platform/Profiler.h"
+#include <cstdio>
 
 int_t NetworkManager::field_28145_d[256];
 int_t NetworkManager::field_28144_e[256];
@@ -282,7 +285,7 @@ void NetworkManager::networkShutdown(const std::string &s, const std::vector<std
 		networkSocket->close();
 }
 
-void NetworkManager::processReadPackets()
+void NetworkManager::processReadPackets(long long chunkBudgetNs)
 {
 	#ifdef PS2_PLATFORM
 	constexpr int_t MAX_SEND_QUEUE_BYTES = 512 * 1024;
@@ -319,6 +322,12 @@ void NetworkManager::processReadPackets()
 	// Limit packet dispatch work per game tick on PS2. A large burst remains
 	// queued for subsequent ticks instead of monopolizing the EE and causing a
 	// visible frame hitch.
+#if PLATFORM_PROFILE_RENDER_PHASES
+	// Dispatch time and count per packet id this tick: "pkt<id>", "#npkt<id>".
+	long long packetNs[256] = {};
+	int packetCount[256] = {};
+#endif
+	const long_t dispatchStartNs = chunkBudgetNs > 0 ? System::nanoTime() : 0;
 	for (int_t i = MAX_PACKETS_PER_TICK; i-- > 0;)
 	{
 		std::unique_ptr<Packet> packet;
@@ -326,6 +335,22 @@ void NetworkManager::processReadPackets()
 			std::lock_guard<PlatformMutex> guard(readQueueLock);
 			if (readPackets.empty())
 				break;
+			// Chunk data (decompress + import, ~5 ms each on Vita) stops at the
+			// budget; everything queued behind it keeps its order and waits too.
+			if (chunkBudgetNs > 0 && i < MAX_PACKETS_PER_TICK - 1 && readPackets.front() != nullptr)
+			{
+				const int_t id = readPackets.front()->getPacketId();
+				// Unloads (pre-chunk, mode false) are cheap and come in hundreds
+				// before a dimension change: pacing them showed the old world
+				// vanishing column by column before the loading screen.
+				const bool unload = id == 50 &&
+					!static_cast<const Packet50PreChunk *>(readPackets.front().get())->mode;
+				if ((id == 51 || (id == 50 && !unload)) && System::nanoTime() - dispatchStartNs >= chunkBudgetNs)
+				{
+					platformProfileTickPhase("#netDefer", 1);
+					break;
+				}
+			}
 			packet = std::move(readPackets.front());
 			readPackets.pop_front();
 			const int_t packetBytes = packet != nullptr ? packet->getPacketSize() + 1 : 0;
@@ -344,7 +369,15 @@ void NetworkManager::processReadPackets()
 						packet->getPacketId(), getReceivedEntityPacketCount(),
 						static_cast<long long>(System::currentTimeMillis() - packet->creationTimeMillis));
 #endif
+#if PLATFORM_PROFILE_RENDER_PHASES
+				const long_t packetStartNs = System::nanoTime();
+				const int packetId = packet->getPacketId() & 0xff;
+#endif
 				packet->processPacket(*netHandler);
+#if PLATFORM_PROFILE_RENDER_PHASES
+				packetNs[packetId] += System::nanoTime() - packetStartNs;
+				packetCount[packetId]++;
+#endif
 			}
 			catch (std::exception &exception)
 			{
@@ -366,6 +399,18 @@ void NetworkManager::processReadPackets()
 		}
 	}
 
+#if PLATFORM_PROFILE_RENDER_PHASES
+	for (int id = 0; id < 256; id++)
+	{
+		if (packetCount[id] == 0)
+			continue;
+		char phase[16];
+		std::snprintf(phase, sizeof(phase), "pkt%d", id);
+		platformProfileTickPhase(phase, packetNs[id]);
+		std::snprintf(phase, sizeof(phase), "#npkt%d", id);
+		platformProfileTickPhase(phase, packetCount[id]);
+	}
+#endif
 	wakeThreads();
 
 	{

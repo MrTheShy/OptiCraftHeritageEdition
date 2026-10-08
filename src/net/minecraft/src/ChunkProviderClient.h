@@ -42,6 +42,11 @@ private:
 
 	Chunk *blankChunk;
 	std::unordered_map<ulong_t, Chunk *> chunkMapping;
+	// Last lookup: block and light reads hit the same chunk over and over, and
+	// each map probe is a software division on the Vita. Main thread only.
+	mutable ulong_t lastKey = 0;
+	mutable Chunk *lastChunk = nullptr; // nullptr = no cached lookup
+	void forgetLastChunk() { lastChunk = nullptr; }
 	std::vector<Chunk *> chunkList;   // field_889_c
 	World *worldObj;
 	std::uint32_t chunkTopologyVersion;

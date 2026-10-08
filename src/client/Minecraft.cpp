@@ -2537,8 +2537,16 @@ void Minecraft::changeWorld(World *world, const std::string &s, EntityPlayerSP *
         oldWorld->detachEntityForWorldChange(transferredPlayer);
 
     statFileWriter->prepareStatsForSync();
-    if (!ps2MultiplayerExit)
+    // A multiplayer dimension change (Packet9) keeps the session: the stats are
+    // written at the next sync point instead. The sync is synchronous file I/O
+    // and first waits up to 3 s for a background stats write still running.
+    const bool multiplayerDimensionChange = oldWorld != nullptr && oldWorld->multiplayerWorld &&
+        world != nullptr && world->multiplayerWorld;
+    if (!ps2MultiplayerExit && !multiplayerDimensionChange)
+    {
+        PlatformTickPhaseScope statsPhase("cwStats");
         statFileWriter->syncStats();
+    }
     renderViewEntity = nullptr;
     loadingScreen->printText(s);
     loadingScreen->displayLoadingString("");
@@ -2546,7 +2554,10 @@ void Minecraft::changeWorld(World *world, const std::string &s, EntityPlayerSP *
     sndManager->playStreaming("", 0.0f, 0.0f, 0.0f, 0.0f, 0.0f);
 
     if (oldWorld != nullptr && !ps2MultiplayerExit)
+    {
+        PlatformTickPhaseScope savePhase("cwSave");
         oldWorld->saveWorldIndirectly(loadingScreen);
+    }
 
     theWorld = world;
     if (renderEngine != nullptr && world == nullptr)
@@ -2659,7 +2670,10 @@ void Minecraft::changeWorld(World *world, const std::string &s, EntityPlayerSP *
     }
 
     if (renderGlobal != nullptr)
+    {
+        PlatformTickPhaseScope renderPhase("cwRender");
         renderGlobal->changeWorld(world);
+    }
     platformMemoryCheckpoint("changeWorld renderGlobal ready");
     if (effectRenderer != nullptr)
         effectRenderer->clearEffects(world);
@@ -2818,9 +2832,15 @@ void Minecraft::respawn(bool flag, int_t i, bool copyPlayerState)
     thePlayer = (EntityPlayerSP *)playerController->createPlayer(theWorld);
     if (copyPlayerState && oldPlayer != nullptr)
         thePlayer->copyPlayer(oldPlayer);
-    else if (isDebugKeepInventoryEnabled() && oldPlayer != nullptr &&
-             thePlayer->inventory != nullptr && oldPlayer->inventory != nullptr)
+    else if (oldPlayer != nullptr && thePlayer->inventory != nullptr && oldPlayer->inventory != nullptr &&
+             (isDebugKeepInventoryEnabled() ||
+              (theWorld != nullptr && theWorld->multiplayerWorld && oldPlayer->health > 0)))
+    {
+        // A living player's respawn in multiplayer is a world change. Java
+        // waited for the server to resend the inventory, which many servers
+        // and proxies do not; a real death still starts empty.
         thePlayer->inventory->copyInventory(oldPlayer->inventory);
+    }
     thePlayer->dimension = i;
     renderViewEntity     = thePlayer;
     thePlayer->preparePlayerToSpawn();
@@ -2847,7 +2867,10 @@ void Minecraft::respawn(bool flag, int_t i, bool copyPlayerState)
     thePlayerOne = thePlayer;
     if (isPlayerScreenActive(0))
         closePlayerScreen(0);
-    preloadWorld("Respawning");
+    {
+        PlatformTickPhaseScope preloadPhase("rsPreload");
+        preloadWorld("Respawning");
+    }
 
     if (dynamic_cast<GuiGameOver *>(currentScreen) != nullptr)
         displayGuiScreen(nullptr);

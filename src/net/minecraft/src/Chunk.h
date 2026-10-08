@@ -122,6 +122,14 @@ public:
 	// when the supplied buffer is shorter than the masks require and leaves data
 	// already copied into earlier sections untouched, matching stream semantics
 	// while preventing out-of-bounds reads in C++.
+	// Multiplayer: some servers (translating from newer versions, which send
+	// light separately) send 1.2.5 chunks with every skylight nibble 0, and
+	// the column renders pitch black. True when every section in the mask
+	// exists and its skylight is all 0; lightFromScratch() then lights the
+	// column the way a generated one is (sky light down the columns, gaps
+	// spread by updateSkylight, block light from each light source).
+	bool sectionsSkylightAllZero(int_t sectionMask) const;
+	int_t lightFromScratch();
 	bool func_48494_a(const byte_t *bytes, std::size_t length,
 	                  int_t primaryBitMask, int_t addBitMask,
 	                  bool includeBiomeData, std::size_t *bytesConsumed = nullptr);
@@ -149,6 +157,8 @@ public:
 
 	bool field_50120_o;
 	bool isChunkLoaded;
+	// Multiplayer: terrain arrived (Packet51). A pre-chunk alone is all air.
+	bool hasNetworkData = false;
 	World *worldObj;
 	int_t precipitationHeightMap[256];
 	bool updateSkylightColumns[256];
