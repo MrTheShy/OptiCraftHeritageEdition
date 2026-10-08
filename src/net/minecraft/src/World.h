@@ -282,7 +282,7 @@ public:
 	virtual void onEntityRemoved(Entity *entity);
 	bool isLoadedEntityPointer(const Entity *entity) const;
 	bool isLoadedTileEntityPointer(const TileEntity *tileEntity) const;
-	void detachEntityForWorldChange(Entity *entity);
+	virtual void detachEntityForWorldChange(Entity *entity);
 	void addWorldAccess(IWorldAccess *iworldaccess);
 	void removeWorldAccess(IWorldAccess *iworldaccess);
 	std::vector<AxisAlignedBB *> &getCollidingBoundingBoxes(Entity *entity, AxisAlignedBB *axisalignedbb);

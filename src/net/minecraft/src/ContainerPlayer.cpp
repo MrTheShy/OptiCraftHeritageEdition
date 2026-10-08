@@ -75,13 +75,11 @@ void ContainerPlayer::onCraftGuiClosed(EntityPlayer *par1EntityPlayer)
         }
     }
 
-    // FIX (Issue #18): Vaciar el slot del ítem crafteado para evitar duplicación
-     ItemStack *oldResult = craftResult->getStackInSlot(0);
- craftResult->setInventorySlotContents(0, nullptr);
- if (oldResult != nullptr)
- {
-     delete oldResult;
-}
+    // FIX (Issue #18): empty the result slot so the result is not duplicated.
+    // setInventorySlotContents deletes the stack it replaces; deleting it here
+    // as well freed it twice (crash closing the inventory with a recipe in the
+    // 2x2 grid).
+    craftResult->setInventorySlotContents(0, nullptr);
 
 }
 

@@ -858,7 +858,9 @@ void WorldClient::applyNetworkPosition(Entity *entity, double x, double y, doubl
 		!checkChunksExist(bx - margin, 0, bz - margin, bx + margin, WorldHeight::HEIGHT, bz + margin);
 	if (!isActiveClientEntity(entity) && !entity->isDead && stalled)
 	{
-		detachEntityForWorldChange(entity);
+		// The base detach: the WorldClient override also forgets the entity id,
+		// and this entity stays known while it waits in the spawn queue.
+		World::detachEntityForWorldChange(entity);
 		entity->setPositionAndRotation2(x, y, z, yaw, pitch, 0);
 		entity->setPositionAndRotation(x, y, z, yaw, pitch);
 		entity->lastTickPosX = entity->prevPosX = x;
@@ -1004,6 +1006,22 @@ void WorldClient::onEntityRemoved(Entity *entity)
 			arrow->owner = nullptr;
 	}
 
+	entitySpawnQueue.remove(entity);
+	knownEntities.remove(entity);
+	if (static_cast<Entity *>(entityHash->lookup(entity->entityId)) == entity)
+		entityHash->removeObject(entity->entityId);
+}
+
+// The local player joins a WorldClient through entityJoinedWorld, which also
+// records it in knownEntities. ~WorldClient hands every known entity back to
+// ~World for deletion, so a player carried into the next dimension (and then
+// replaced by respawn) was deleted by the abandoned world and again by the new
+// one's dead-entity pass: the crash entering the Nether on a server.
+void WorldClient::detachEntityForWorldChange(Entity *entity)
+{
+	World::detachEntityForWorldChange(entity);
+	if (entity == nullptr)
+		return;
 	entitySpawnQueue.remove(entity);
 	knownEntities.remove(entity);
 	if (static_cast<Entity *>(entityHash->lookup(entity->entityId)) == entity)

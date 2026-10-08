@@ -72,6 +72,7 @@ protected:
 	void obtainEntitySkin(Entity *entity) override;
 	void releaseEntitySkin(Entity *entity) override;
 	void onEntityRemoved(Entity *entity) override;
+	void detachEntityForWorldChange(Entity *entity) override;
 	void updateWeather() override;
 
 private:
