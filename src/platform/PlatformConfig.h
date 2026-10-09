@@ -156,6 +156,18 @@
 #  define PLATFORM_VERIFY_ENTITY_SHORTCUTS 0
 #endif
 
+// Terrain sections are drawn from one VBO each by a batched, state-hoisted loop
+// (pc/render/VitaTerrainBatch) instead of replaying recorded GL closures. Lives
+// here, not in the tuning tables: it changes WorldRenderer/RenderList layout, so
+// every translation unit must see the same value.
+#ifndef PLATFORM_TERRAIN_VBO_BATCH
+#  ifdef VITA_PLATFORM
+#    define PLATFORM_TERRAIN_VBO_BATCH 1
+#  else
+#    define PLATFORM_TERRAIN_VBO_BATCH 0
+#  endif
+#endif
+
 #endif
 
 #ifndef PLATFORM_NATIVE_TERRAIN_PIPELINE

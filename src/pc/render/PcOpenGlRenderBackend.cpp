@@ -1,4 +1,6 @@
 #include "platform/RenderAPI.h"
+#include "pc/render/VitaTerrainBatch.h"
+#include "pc/render/VitaModelBatch.h"
 
 
 #include <glad/glad.h>
@@ -10,6 +12,7 @@
 #define GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT 0x84FF
 #endif
 
+#include <algorithm>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -30,6 +33,10 @@ namespace
 {
 std::vector<std::vector<std::function<void()>>> g_vitaLists(1);
 int g_vitaRecording = 0;
+// Lists being recorded around the current one. A list compiled lazily while
+// another records (a model first drawn inside a cached HUD or chunk list)
+// must hand recording back to the outer list when it ends, not stop it.
+std::vector<int> g_vitaRecordingStack;
 
 bool vitaRecord(std::function<void()> command)
 {
@@ -154,18 +161,95 @@ void glGetQueryObjectuivARB(GLuint query, GLenum parameter, GLuint *value)
 }
 
 
+#ifdef VITA_PLATFORM
+// Fixed-function state the terrain shader (VitaTerrainBatch) reproduces.
+static VitaFixedState g_vitaFixed = {false, 0, 0.0f, 1.0f, 1.0f, {0.0f, 0.0f, 0.0f, 0.0f}, false, 0.0f};
+const VitaFixedState &fixedState() { return g_vitaFixed; }
+
+// vitaGL reads glMultiTexCoord only between glBegin/glEnd, and ignores texture
+// unit 1 unless a coordinate array is attached. Entities are drawn from arrays
+// without brightness, so they skipped the lightmap: always full bright, day or
+// night, hand included. Such draws now get an array holding the current
+// lightmap coordinate. Client arrays are copied at draw time, so one buffer
+// serves every draw.
+static bool g_vitaUnit1Active = false;
+static bool g_vitaLightmapEnabled = false;
+static GLshort g_vitaLightmapUV[2] = {240, 240};
+static std::vector<GLshort> g_vitaLightmapArray;
+static GLshort g_vitaLightmapFilledUV[2] = {-1, -1};
+static std::size_t g_vitaLightmapFilled = 0;
+
+static bool vitaBindConstantLightmap(int count)
+{
+    if (!g_vitaLightmapEnabled || count <= 0)
+        return false;
+    const std::size_t vertices = static_cast<std::size_t>(count);
+    if (g_vitaLightmapFilledUV[0] != g_vitaLightmapUV[0] || g_vitaLightmapFilledUV[1] != g_vitaLightmapUV[1])
+        g_vitaLightmapFilled = 0;
+    if (g_vitaLightmapFilled < vertices)
+    {
+        g_vitaLightmapArray.resize(std::max(g_vitaLightmapArray.size(), vertices * 2));
+        for (std::size_t i = g_vitaLightmapFilled * 2; i < vertices * 2; i += 2)
+        {
+            g_vitaLightmapArray[i] = g_vitaLightmapUV[0];
+            g_vitaLightmapArray[i + 1] = g_vitaLightmapUV[1];
+        }
+        g_vitaLightmapFilled = vertices;
+        g_vitaLightmapFilledUV[0] = g_vitaLightmapUV[0];
+        g_vitaLightmapFilledUV[1] = g_vitaLightmapUV[1];
+    }
+    clientActiveTextureCompat(GL_TEXTURE1_ARB);
+    glTexCoordPointer(2, GL_SHORT, 0, g_vitaLightmapArray.data());
+    glEnableClientState(GL_TEXTURE_COORD_ARRAY);
+    clientActiveTextureCompat(GL_TEXTURE0_ARB);
+    return true;
+}
+
+bool vitaDisplayListRecordingImpl() { return g_vitaRecording > 0; }
+void vitaLightmapCoordImpl(float out[2]) { out[0] = g_vitaLightmapUV[0]; out[1] = g_vitaLightmapUV[1]; }
+
+static void vitaUnbindConstantLightmap()
+{
+    clientActiveTextureCompat(GL_TEXTURE1_ARB);
+    glDisableClientState(GL_TEXTURE_COORD_ARRAY);
+    glTexCoordPointer(2, GL_SHORT, 0, nullptr);
+    clientActiveTextureCompat(GL_TEXTURE0_ARB);
+}
+#endif
+
 void renderEnable(RenderCapability capability)
 {
     VITA_RECORD(PcOpenGlRenderBackend::renderEnable(capability));
     switch (capability)
     {
-        case RenderCapability::Texture2D: glEnable(GL_TEXTURE_2D); break;
-        case RenderCapability::ColorMaterial: glEnable(GL_COLOR_MATERIAL); break;
+        case RenderCapability::Texture2D:
+#ifdef VITA_PLATFORM
+            if (g_vitaUnit1Active)
+                g_vitaLightmapEnabled = true;
+#endif
+            glEnable(GL_TEXTURE_2D);
+            break;
+        case RenderCapability::ColorMaterial:
+#if PLATFORM_MODEL_GPU_BATCH
+            vitaModelTrackColorMaterial(true);
+#endif
+            glEnable(GL_COLOR_MATERIAL);
+            break;
         case RenderCapability::CullFace: glEnable(GL_CULL_FACE); break;
-        case RenderCapability::AlphaTest: glEnable(GL_ALPHA_TEST); break;
+        case RenderCapability::AlphaTest:
+#ifdef VITA_PLATFORM
+            g_vitaFixed.alphaTest = true;
+#endif
+            glEnable(GL_ALPHA_TEST);
+            break;
         case RenderCapability::Blend: glEnable(GL_BLEND); break;
         case RenderCapability::DepthTest: glEnable(GL_DEPTH_TEST); break;
-        case RenderCapability::Fog: glEnable(GL_FOG); break;
+        case RenderCapability::Fog:
+#ifdef VITA_PLATFORM
+            g_vitaFixed.fog = true;
+#endif
+            glEnable(GL_FOG);
+            break;
         case RenderCapability::Lighting: glEnable(GL_LIGHTING); break;
         case RenderCapability::Normalize: glEnable(GL_NORMALIZE); break;
 #ifdef VITA_PLATFORM
@@ -184,13 +268,34 @@ void renderDisable(RenderCapability capability)
     VITA_RECORD(PcOpenGlRenderBackend::renderDisable(capability));
     switch (capability)
     {
-        case RenderCapability::Texture2D: glDisable(GL_TEXTURE_2D); break;
-        case RenderCapability::ColorMaterial: glDisable(GL_COLOR_MATERIAL); break;
+        case RenderCapability::Texture2D:
+#ifdef VITA_PLATFORM
+            if (g_vitaUnit1Active)
+                g_vitaLightmapEnabled = false;
+#endif
+            glDisable(GL_TEXTURE_2D);
+            break;
+        case RenderCapability::ColorMaterial:
+#if PLATFORM_MODEL_GPU_BATCH
+            vitaModelTrackColorMaterial(false);
+#endif
+            glDisable(GL_COLOR_MATERIAL);
+            break;
         case RenderCapability::CullFace: glDisable(GL_CULL_FACE); break;
-        case RenderCapability::AlphaTest: glDisable(GL_ALPHA_TEST); break;
+        case RenderCapability::AlphaTest:
+#ifdef VITA_PLATFORM
+            g_vitaFixed.alphaTest = false;
+#endif
+            glDisable(GL_ALPHA_TEST);
+            break;
         case RenderCapability::Blend: glDisable(GL_BLEND); break;
         case RenderCapability::DepthTest: glDisable(GL_DEPTH_TEST); break;
-        case RenderCapability::Fog: glDisable(GL_FOG); break;
+        case RenderCapability::Fog:
+#ifdef VITA_PLATFORM
+            g_vitaFixed.fog = false;
+#endif
+            glDisable(GL_FOG);
+            break;
         case RenderCapability::Lighting: glDisable(GL_LIGHTING); break;
         case RenderCapability::Normalize: glDisable(GL_NORMALIZE); break;
 #ifdef VITA_PLATFORM
@@ -272,6 +377,12 @@ void renderAlphaFunc(RenderCompare function, float reference)
         }
         return GL_ALWAYS;
     };
+#ifdef VITA_PLATFORM
+    g_vitaFixed.alphaRef = reference;
+#endif
+#if PLATFORM_MODEL_GPU_BATCH
+    vitaModelTrackAlphaFunc(glCompare(function));
+#endif
     glAlphaFunc(glCompare(function), reference);
 }
 
@@ -295,7 +406,9 @@ void renderColorMask(bool red, bool green, bool blue, bool alpha)
 void renderBindTexture(int texture)
 {
 #ifdef VITA_PLATFORM
-    vitaRecord([=] { PcOpenGlRenderBackend::renderBindTexture(texture); });
+    VITA_MODEL_FLUSH();
+    if (g_vitaRecording > 0)
+        vitaRecord([=] { PcOpenGlRenderBackend::renderBindTexture(texture); });
 #endif
     glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(texture));
 }
@@ -303,6 +416,9 @@ void renderBindTexture(int texture)
 void renderSetActiveTextureUnit(int textureUnit)
 {
     VITA_RECORD(PcOpenGlRenderBackend::renderSetActiveTextureUnit(textureUnit));
+#ifdef VITA_PLATFORM
+    g_vitaUnit1Active = textureUnit == GL_TEXTURE1_ARB;
+#endif
     activeTextureCompat(static_cast<GLenum>(textureUnit));
 }
 
@@ -315,7 +431,16 @@ void renderSetClientActiveTextureUnit(int textureUnit)
 void renderSetMultiTextureCoord(int textureUnit, float u, float v)
 {
     VITA_RECORD(PcOpenGlRenderBackend::renderSetMultiTextureCoord(textureUnit, u, v));
+#ifdef VITA_PLATFORM
+    if (textureUnit == GL_TEXTURE1_ARB)
+    {
+        g_vitaLightmapUV[0] = static_cast<GLshort>(u);
+        g_vitaLightmapUV[1] = static_cast<GLshort>(v);
+    }
+    // Outside glBegin/glEnd vitaGL rejects the call (GL_INVALID_OPERATION).
+#else
     multiTexCoord2fCompat(static_cast<GLenum>(textureUnit), u, v);
+#endif
 }
 
 void renderSetLightmapColors(const std::uint32_t* colors, int count)
@@ -371,6 +496,7 @@ void renderTextureSubImageRgba(int level, int x, int y, int width, int height, c
 // pixels rather than a format enum.
 void renderTextureImageRgba(int level, int width, int height, const void *pixels)
 {
+    VITA_PERF_COUNT(g_vitaPerfTexUploads, 1);
     glTexImage2D(GL_TEXTURE_2D, level, GL_RGBA, width, height, 0,
                  GL_RGBA, GL_UNSIGNED_BYTE, pixels);
 }
@@ -461,6 +587,18 @@ void renderFogf(RenderFogParameter parameter, float value)
 #endif
             break;
     }
+#ifdef VITA_PLATFORM
+    switch (parameter)
+    {
+        case RenderFogParameter::Density: g_vitaFixed.fogDensity = value; break;
+        case RenderFogParameter::Start: g_vitaFixed.fogStart = value; break;
+        case RenderFogParameter::End: g_vitaFixed.fogEnd = value; break;
+        case RenderFogParameter::Mode:
+            g_vitaFixed.fogMode = value == GL_EXP ? 1 : value == GL_EXP2 ? 2 : 0;
+            break;
+        default: break;
+    }
+#endif
     glFogf(glParameter, value);
 }
 
@@ -476,6 +614,10 @@ void renderFogi(RenderFogParameter parameter, RenderFogMode value)
         case RenderFogMode::Linear: glMode = GL_LINEAR; break;
         case RenderFogMode::EyeRadial: glMode = GL_EYE_RADIAL_NV; break;
     }
+#ifdef VITA_PLATFORM
+    if (glParameter == GL_FOG_MODE)
+        g_vitaFixed.fogMode = glMode == GL_EXP ? 1 : glMode == GL_EXP2 ? 2 : 0;
+#endif
     glFogi(glParameter, glMode);
 }
 
@@ -488,6 +630,9 @@ void renderFogColor(const float* values)
         vitaRecord([=] { const float copy[4] = {v0, v1, v2, v3}; PcOpenGlRenderBackend::renderFogColor(copy); });
         return;
     }
+#endif
+#ifdef VITA_PLATFORM
+    std::memcpy(g_vitaFixed.fogColor, values, sizeof(g_vitaFixed.fogColor));
 #endif
     glFogfv(GL_FOG_COLOR, values);
 }
@@ -722,12 +867,19 @@ void renderBeginDisplayList(int list)
     if (list <= 0 || list >= static_cast<int>(g_vitaLists.size()))
         return;
     g_vitaLists[static_cast<std::size_t>(list)].clear();
+    g_vitaRecordingStack.push_back(g_vitaRecording);
     g_vitaRecording = list;
 }
 
 void renderEndDisplayList()
 {
-    g_vitaRecording = 0;
+    if (g_vitaRecordingStack.empty())
+    {
+        g_vitaRecording = 0;
+        return;
+    }
+    g_vitaRecording = g_vitaRecordingStack.back();
+    g_vitaRecordingStack.pop_back();
 }
 
 void renderCallDisplayList(int list)
@@ -849,6 +1001,7 @@ static std::shared_ptr<VitaBufferedMesh> vitaUploadMesh(const RenderCapturedMesh
     if (out->buffer == 0)
         return nullptr;
     glBindBuffer(GL_ARRAY_BUFFER, out->buffer);
+    VITA_PERF_COUNT(g_vitaPerfBufferBytes, static_cast<unsigned>(mesh.vertexCount * mesh.stride));
     glBufferData(GL_ARRAY_BUFFER, static_cast<GLsizei>(static_cast<std::size_t>(mesh.vertexCount) * static_cast<std::size_t>(mesh.stride)),
         mesh.raw.data(), GL_STATIC_DRAW);
     glBindBuffer(GL_ARRAY_BUFFER, 0);
@@ -875,6 +1028,8 @@ static void vitaDrawBufferedMesh(const VitaBufferedMesh& buffered)
         return reinterpret_cast<const void*>(static_cast<std::uintptr_t>(offset));
     };
 
+    // Before the VBO bind: vitaGL takes the buffer bound when the pointer is set.
+    const bool constantLightmap = !mesh.hasBrightness && vitaBindConstantLightmap(mesh.count);
     glBindBuffer(GL_ARRAY_BUFFER, buffered.buffer);
     clientActiveTextureCompat(GL_TEXTURE0_ARB);
     if (mesh.hasTexture)
@@ -902,8 +1057,11 @@ static void vitaDrawBufferedMesh(const VitaBufferedMesh& buffered)
 
     glVertexPointer(3, mesh.positionShort ? GL_SHORT : GL_FLOAT, mesh.stride, pointerForOffset(0));
     glEnableClientState(GL_VERTEX_ARRAY);
+    VITA_PERF_COUNT(g_vitaPerfDraws, 1);
     glDrawArrays(static_cast<GLenum>(renderPrimitiveValue(mesh.primitive)), 0, mesh.count);
     glDisableClientState(GL_VERTEX_ARRAY);
+    if (constantLightmap)
+        vitaUnbindConstantLightmap();
 
     if (mesh.hasTexture)
         glDisableClientState(GL_TEXTURE_COORD_ARRAY);
@@ -919,6 +1077,9 @@ static void vitaDrawBufferedMesh(const VitaBufferedMesh& buffered)
         glDisableClientState(GL_NORMAL_ARRAY);
     glBindBuffer(GL_ARRAY_BUFFER, 0);
 
+    // Not redundant: with lighting on, vitaGL feeds the material from the
+    // colour/normal pointers it last saw, so a stale VBO pointer recolours
+    // the next lit draw (entities turned red/blue without these).
     glVertexPointer(3, GL_FLOAT, 0, nullptr);
     if (mesh.hasTexture)
         glTexCoordPointer(2, GL_FLOAT, 0, nullptr);
@@ -958,6 +1119,9 @@ bool renderDrawInterleaved(const RenderInterleavedMesh& mesh)
         return reinterpret_cast<const unsigned char*>(mesh.data) + offset;
     };
 
+#ifdef VITA_PLATFORM
+    const bool constantLightmap = !mesh.hasBrightness && vitaBindConstantLightmap(mesh.first + mesh.count);
+#endif
     clientActiveTextureCompat(GL_TEXTURE0_ARB);
     if (mesh.hasTexture)
     {
@@ -984,8 +1148,13 @@ bool renderDrawInterleaved(const RenderInterleavedMesh& mesh)
 
     glVertexPointer(3, mesh.positionShort ? GL_SHORT : GL_FLOAT, mesh.stride, pointerForOffset(0));
     glEnableClientState(GL_VERTEX_ARRAY);
+    VITA_PERF_COUNT(g_vitaPerfDraws, 1);
     glDrawArrays(static_cast<GLenum>(renderPrimitiveValue(mesh.primitive)), mesh.first, mesh.count);
     glDisableClientState(GL_VERTEX_ARRAY);
+#ifdef VITA_PLATFORM
+    if (constantLightmap)
+        vitaUnbindConstantLightmap();
+#endif
 
     if (mesh.hasTexture)
         glDisableClientState(GL_TEXTURE_COORD_ARRAY);
@@ -1066,3 +1235,7 @@ bool renderDrawCaptured(const RenderCapturedMesh& mesh)
 
 
 }
+
+#ifdef VITA_PLATFORM
+const VitaFixedState &vitaFixedState() { return PcOpenGlRenderBackend::fixedState(); }
+#endif

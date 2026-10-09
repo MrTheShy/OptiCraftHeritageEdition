@@ -12,6 +12,9 @@ RenderList::RenderList()
     viewerY = 0.0;
     viewerZ = 0.0;
     displayListIds.reserve(0x10000);
+#if PLATFORM_TERRAIN_VBO_BATCH
+    batchDraws.reserve(0x1000);
+#endif
     initialized = false;
 }
 
@@ -19,6 +22,9 @@ void RenderList::setup(int i, int j, int k, double d, double d1, double d2)
 {
     initialized = true;
     displayListIds.clear();
+#if PLATFORM_TERRAIN_VBO_BATCH
+    batchDraws.clear();
+#endif
     originX = i;
     originY = j;
     originZ = k;
@@ -41,6 +47,21 @@ void RenderList::addTerrainRenderer(WorldRenderer *renderer, int_t pass)
     if (list < 0)
         return;
 
+#if PLATFORM_TERRAIN_VBO_BATCH
+    const VitaTerrainMesh &mesh = renderer->terrainBatchMesh(pass);
+    if (mesh.buffer != 0)
+    {
+        // Section origin relative to the eye, from the same viewer position the
+        // list translation uses; the draw loop applies it per section.
+        batchPass = static_cast<int>(pass);
+        batchDraws.push_back({mesh.buffer, mesh.vertexCount, mesh.solidCount, mesh.shader,
+            static_cast<float>(static_cast<double>(renderer->posX) - viewerX),
+            static_cast<float>(static_cast<double>(renderer->posY) - viewerY),
+            static_cast<float>(static_cast<double>(renderer->posZ) - viewerZ), &mesh});
+    }
+    if (!renderer->terrainBatchNeedsList(pass))
+        return;
+#endif
     displayListIds.push_back(list);
     if (displayListIds.size() >= displayListIds.capacity())
         render();
@@ -50,6 +71,15 @@ void RenderList::render()
 {
     if (!initialized)
         return;
+#if PLATFORM_TERRAIN_VBO_BATCH
+    // Batch first: it sets client state once and leaves it as a list draw would.
+    // The lists below enable and disable their own arrays, so they must not run
+    // inside it.
+    if (!batchDraws.empty())
+    {
+        vitaTerrainDrawBatch(batchDraws.data(), batchDraws.size(), batchPass);
+    }
+#endif
     if (displayListIds.empty())
         return;
 

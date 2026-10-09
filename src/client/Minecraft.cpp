@@ -976,7 +976,10 @@ void Minecraft::run()
                 long_t l2 = System::nanoTime() - l1;
                 ClientProfiler::ticks(l2, clientTicksThisFrame);
                 checkGLError("Pre render");
-                RenderBlocks::fancyGrass = gameSettings->fancyGraphics;
+                // The Grass option (EntityRenderer sets the same): writing
+                // fancyGraphics here flipped the flag the mesh worker reads
+                // every frame, so sections came out with and without overlay.
+                RenderBlocks::fancyGrass = Config::isGrassFancy() || Config::isBetterGrassFancy();
                 sndManager->setListenerPosition(thePlayer, timer->renderPartialTicks);
                 renderEnable(RenderCapability::Texture2D);
 

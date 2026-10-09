@@ -668,6 +668,13 @@ void WorldRenderer::setDontDraw()
 	_skipRenderPass[0] = true;
 	_skipRenderPass[1] = true;
 #endif
+#if PLATFORM_TERRAIN_VBO_BATCH
+	for (int_t pass = 0; pass < 2; ++pass)
+	{
+		vitaTerrainRelease(vitaTerrain[pass]);
+		vitaTerrainList[pass] = false;
+	}
+#endif
 #ifdef PS2_PLATFORM
 	// clear(), NOT a swap-to-empty.
 	//

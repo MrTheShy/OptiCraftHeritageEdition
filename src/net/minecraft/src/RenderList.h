@@ -28,6 +28,10 @@ private:
     double viewerZ;
 #if PLATFORM_PC
     std::vector<int_t> displayListIds;
+#if PLATFORM_TERRAIN_VBO_BATCH
+    std::vector<VitaTerrainDraw> batchDraws;
+    int batchPass = 0;
+#endif
 #elif PLATFORM_WII
     struct TerrainRenderEntry
     {

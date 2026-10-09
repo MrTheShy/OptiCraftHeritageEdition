@@ -8,6 +8,7 @@
 #include "platform/RenderTerrainAPI.h"
 #include "platform/PlatformConfig.h"
 #include "Tessellator.h"
+#include "pc/render/VitaTerrainBatch.h"
 
 class World;
 class TileEntity;
@@ -51,6 +52,14 @@ public:
 #if PLATFORM_PC
 	void callOcclusionQueryList();
 	int_t getGLCallListForPass(int_t pass);
+#endif
+#if PLATFORM_TERRAIN_VBO_BATCH
+	// Pass geometry published as one VBO (buffer == 0: none). Drawn by
+	// RenderList through vitaTerrainDrawBatch, not through the display list.
+	const VitaTerrainMesh &terrainBatchMesh(int_t pass) const { return vitaTerrain[pass]; }
+	// Whether the pass display list still holds something (extra-texture
+	// groups, static tile entities, or a mesh the batch format cannot hold).
+	bool terrainBatchNeedsList(int_t pass) const { return vitaTerrainList[pass]; }
 #endif
 #if defined(WII_PLATFORM) || defined(PS2_PLATFORM)
 	void renderExtraTerrainMeshes(int_t pass);
@@ -293,6 +302,10 @@ private:
 #endif
 	bool isInitialized;
 	bool _skipRenderPass[2];
+#if PLATFORM_TERRAIN_VBO_BATCH
+	VitaTerrainMesh vitaTerrain[2];
+	bool vitaTerrainList[2] = {false, false};
+#endif
 #ifdef PS2_PLATFORM
 	std::vector<int_t> ps2RawBuffer[2];
 	int_t ps2VertexCount[2];

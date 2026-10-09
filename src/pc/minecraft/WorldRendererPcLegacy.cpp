@@ -12,6 +12,7 @@
 #include "net/minecraft/src/Block.h"
 #include "net/minecraft/src/Chunk.h"
 #include "net/minecraft/src/ConnectedTextures.h"
+#include "net/minecraft/src/Config.h"
 #include "net/minecraft/src/ExtendedBlockStorage.h"
 #include "net/minecraft/src/RenderBlocks.h"
 #include "net/minecraft/src/Tessellator.h"
@@ -280,6 +281,40 @@ void WorldRenderer::pcLegacyPublishBuild(PcLegacyTerrainStaging &staging)
 
     for (int_t pass = 0; pass < 2; ++pass)
     {
+#if PLATFORM_TERRAIN_VBO_BATCH
+        // Terrain goes to one VBO drawn by the batched RenderList loop. The
+        // display list is kept only for what the batch cannot hold; a mesh the
+        // format rejects (coordinates out of range, unexpected layout) falls
+        // back to the old list draw for this section.
+        VitaTerrainPublish batchResult = VitaTerrainPublish::Unsupported;
+        if (Config::isFastTerrain())
+        {
+            batchResult = vitaTerrainPublish(
+                vitaTerrain[pass], staging.compactPassMeshes[pass], staging.passMeshes[pass], pass, Config::isTerrainShader());
+        }
+        else
+        {
+            vitaTerrainRelease(vitaTerrain[pass]);
+        }
+        const bool batched = batchResult != VitaTerrainPublish::Unsupported;
+        bool listNeeded = true;
+        if (batched)
+        {
+            listNeeded = pass == 0 && !staging.staticTileEntityCandidates.empty();
+            for (const TessellatorTextureMesh &group : staging.extraTextureMeshes[pass])
+                listNeeded |= !group.mesh.empty();
+        }
+        if (!listNeeded)
+        {
+            // Drop whatever an earlier build recorded (and its VBOs).
+            renderDeleteDisplayLists(glRenderList + pass, 1);
+            vitaTerrainList[pass] = false;
+            _skipRenderPass[pass] = batchResult == VitaTerrainPublish::Empty;
+            continue;
+        }
+#else
+        constexpr bool batched = false;
+#endif
         renderBeginDisplayList(glRenderList + pass);
 
         // Terrain keeps the tiny vanilla/OptiFine seam scale. Static TileEntity
@@ -296,8 +331,8 @@ void WorldRenderer::pcLegacyPublishBuild(PcLegacyTerrainStaging &staging)
             static_cast<float>(sizeHeight) / 2.0f,
             static_cast<float>(sizeDepth) / 2.0f);
 
-        const bool compactDrawn = renderDrawCaptured(staging.compactPassMeshes[pass]);
-        const bool baseDrawn = renderDrawCaptured(staging.passMeshes[pass]);
+        const bool compactDrawn = !batched && renderDrawCaptured(staging.compactPassMeshes[pass]);
+        const bool baseDrawn = !batched && renderDrawCaptured(staging.passMeshes[pass]);
         bool extraDrawn = false;
         for (const TessellatorTextureMesh &group : staging.extraTextureMeshes[pass])
         {
@@ -362,7 +397,13 @@ void WorldRenderer::pcLegacyPublishBuild(PcLegacyTerrainStaging &staging)
 #endif
 
         renderEndDisplayList();
+#if PLATFORM_TERRAIN_VBO_BATCH
+        vitaTerrainList[pass] = true;
+        _skipRenderPass[pass] = !(compactDrawn || baseDrawn || extraDrawn || staticTileDrawn ||
+            vitaTerrain[pass].buffer != 0);
+#else
         _skipRenderPass[pass] = !(compactDrawn || baseDrawn || extraDrawn || staticTileDrawn);
+#endif
     }
 
     const std::vector<TileEntity *> &rebuiltTileEntityRenderers = staging.tileEntityRenderers;

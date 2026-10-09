@@ -189,6 +189,10 @@ private:
 	int_t maxBlockY = 0;
 	int_t maxBlockZ = 0;
 	int_t renderDistance = -1;
+#if PLATFORM_TERRAIN_VBO_BATCH
+	// Fast Terrain value the current sections were built with.
+	int fastTerrainBuilt = 1; // Config::isFastTerrain() | isTerrainShader() << 1 at the last loadRenderers
+#endif
 	int_t renderEntitiesStartupCounter = 2;
 	int_t countEntitiesTotal = 0;
 	int_t countEntitiesRendered = 0;
