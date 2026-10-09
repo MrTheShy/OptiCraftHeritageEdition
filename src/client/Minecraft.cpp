@@ -2880,9 +2880,15 @@ void Minecraft::respawn(bool flag, int_t i, bool copyPlayerState)
     thePlayer = (EntityPlayerSP *)playerController->createPlayer(theWorld);
     if (copyPlayerState && oldPlayer != nullptr)
         thePlayer->copyPlayer(oldPlayer);
-    else if (isDebugKeepInventoryEnabled() && oldPlayer != nullptr &&
-             thePlayer->inventory != nullptr && oldPlayer->inventory != nullptr)
+    else if (oldPlayer != nullptr && thePlayer->inventory != nullptr && oldPlayer->inventory != nullptr &&
+             (isDebugKeepInventoryEnabled() ||
+              (theWorld != nullptr && theWorld->multiplayerWorld && oldPlayer->health > 0)))
+    {
+        // A living player's respawn in multiplayer is a world change. Java
+        // waited for the server to resend the inventory, which many servers
+        // and proxies do not; a real death still starts empty.
         thePlayer->inventory->copyInventory(oldPlayer->inventory);
+    }
     thePlayer->dimension = i;
     renderViewEntity     = thePlayer;
     thePlayer->preparePlayerToSpawn();
