@@ -44,6 +44,8 @@
 
 
 int_t WorldRenderer::chunksUpdated = 0;
+unsigned WorldRenderer::layoutVersion = 0;
+unsigned WorldRenderer::editStamp = 0;
 
 
 namespace
@@ -269,6 +271,7 @@ void WorldRenderer::setPosition(int_t x, int_t y, int_t z)
 		return;
 
 	setDontDraw();
+	++layoutVersion;
 	posX = x;
 	posY = y;
 	posZ = z;
@@ -329,25 +332,30 @@ void WorldRenderer::updateOcclusionBox()
 
 void WorldRenderer::updateInFrustrum(ICamera *icamera)
 {
+	updateInFrustrum(icamera, rendererBoundingBox);
+}
+
+void WorldRenderer::updateInFrustrum(ICamera *icamera, AxisAlignedBB *box)
+{
 #if PLATFORM_PS2
 	// PS2 needs the three-state result for its per-section clip fast path.
-	const int cls = icamera->classifyBoundingBox(rendererBoundingBox);
+	const int cls = icamera->classifyBoundingBox(box);
 	isInFrustum = (cls != 0);
 	isFullyInFrustum = (cls == 2);
 #elif PLATFORM_WII
 	// GX has no occlusion queries, so the stronger fully-inside classification
 	// is dead work here. A plain frustum test is the complete Wii contract.
-	isInFrustum = icamera->isBoundingBoxInFrustum(rendererBoundingBox);
+	isInFrustum = icamera->isBoundingBoxInFrustum(box);
 #else
 	if (Config::isOcclusionFancy())
 	{
-		const int cls = icamera->classifyBoundingBox(rendererBoundingBox);
+		const int cls = icamera->classifyBoundingBox(box);
 		isInFrustum = (cls != 0);
 		isFullyInFrustum = (cls == 2);
 	}
 	else
 	{
-		isInFrustum = icamera->isBoundingBoxInFrustum(rendererBoundingBox);
+		isInFrustum = icamera->isBoundingBoxInFrustum(box);
 		isFullyInFrustum = false;
 	}
 #endif

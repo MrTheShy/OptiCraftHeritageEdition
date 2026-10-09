@@ -28,6 +28,8 @@ public:
 
 	void setPosition(int_t x, int_t y, int_t z);
 	void updateInFrustrum(ICamera *icamera);
+	// Same test on a copy of rendererBoundingBox the caller keeps closer at hand.
+	void updateInFrustrum(ICamera *icamera, AxisAlignedBB *box);
 	void updateRenderer();
 	void markDirty();
 #ifdef WII_PLATFORM
@@ -194,6 +196,11 @@ public:
 	void cleanup();
 
 	static int_t chunksUpdated;
+	// Bumped whenever a renderer moves (setPosition); caches keyed on the grid
+	// layout compare it.
+	static unsigned layoutVersion;
+	// Bumped when a player edit dirties a section (mesh scheduler rescans).
+	static unsigned editStamp;
 
 	// Public fields matching Java
 	World *worldObj;

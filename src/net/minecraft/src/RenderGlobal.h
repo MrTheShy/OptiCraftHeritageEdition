@@ -128,6 +128,7 @@ private:
 #if PLATFORM_PC_LEGACY
 	void updatePcLegacySectionVisibility(EntityLiving *viewer);
 	int_t pcLegacyRendererIndexAtSection(int_t sectionX, int_t sectionY, int_t sectionZ) const;
+	bool pcLegacyVisibleSortedOrder(std::vector<int_t> &order);
 #endif
 #if PLATFORM_PS2
 	void updatePs2SectionVisibility(EntityLiving *viewer);
@@ -210,6 +211,11 @@ private:
 #if PLATFORM_PC_LEGACY
 	std::vector<std::uint8_t> pcLegacyVisibilityEntryMasks;
 	std::vector<int_t> pcLegacyVisibilityQueue;
+	// This frame's frustum, set by clipRenderersByFrustrum and consumed (then
+	// cleared) by the visibility walk in the same renderWorld. Never kept
+	// past it: the camera lives on renderWorld's stack.
+	ICamera *pcLegacyVisibilityFrustum = nullptr;
+	std::vector<int_t> pcLegacyVisibleOrder; // sorted positions the walk marked visible
 #endif
 #if !PLATFORM_PS2
 	RenderList *allRenderLists[4];

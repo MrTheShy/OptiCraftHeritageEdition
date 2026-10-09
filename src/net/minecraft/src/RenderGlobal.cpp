@@ -12,6 +12,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
+#include <cstring>
 #include <iterator>
 #include <stdexcept>
 #if PLATFORM_PS2
@@ -29,6 +31,7 @@
 #include "platform/RenderTerrainStaging.h"
 #include "client/Minecraft.h"
 #include "Config.h"
+#include "OpenGlHelper.h"
 #include "ActiveRenderInfo.h"
 #include "CustomColorizer.h"
 #include "Block.h"
@@ -109,6 +112,29 @@
 
 namespace
 {
+// EntitySorter's order, with its key computed once per renderer instead of
+// twice per comparison: at 16 chunks (8712 renderers) the comparator sort took
+// up to 24 ms every 4 blocks walked.
+void sortRenderersByDistance(WorldRenderer **renderers, int_t count, Entity *entity)
+{
+	static std::vector<std::pair<double, WorldRenderer *>> keyed;
+	keyed.resize(static_cast<std::size_t>(count));
+	const double ex = -entity->posX, ey = -entity->posY, ez = -entity->posZ;
+	for (int_t r = 0; r < count; ++r)
+	{
+		WorldRenderer *renderer = renderers[r];
+		const double dx = (double)renderer->posXPlus + ex;
+		const double dy = (double)renderer->posYPlus + ey;
+		const double dz = (double)renderer->posZPlus + ez;
+		keyed[static_cast<std::size_t>(r)] = {dx * dx + dy * dy + dz * dz, renderer};
+	}
+	std::sort(keyed.begin(), keyed.end(),
+		[](const std::pair<double, WorldRenderer *> &a, const std::pair<double, WorldRenderer *> &b)
+		{ return a.first < b.first; });
+	for (int_t r = 0; r < count; ++r)
+		renderers[r] = keyed[static_cast<std::size_t>(r)].second;
+}
+
 inline void applyPs2LegacyAtmosphereRgb(Minecraft *mc, float &red, float &green, float &blue)
 {
 #if PLATFORM_PS2
@@ -456,9 +482,10 @@ void RenderGlobal::loadRenderers()
 #endif
 	tileEntities.clear();
 
+	const int_t previousRenderers = worldRenderers != nullptr ? renderChunksWide * renderChunksTall * renderChunksDeep : 0;
 	if (worldRenderers != nullptr)
 	{
-		for (int_t i = 0; i < renderChunksWide * renderChunksTall * renderChunksDeep; i++)
+		for (int_t i = 0; i < previousRenderers; i++)
 		{
 			if (worldRenderers[i] != nullptr)
 				delete worldRenderers[i];
@@ -468,7 +495,27 @@ void RenderGlobal::loadRenderers()
 	}
 	const long long lrFreedNs = System::nanoTime();
 
-#if PLATFORM_CONSOLE_LOW || PLATFORM_PC_LEGACY
+#ifdef VITA_PLATFORM
+	// WorldRenderer::cleanup keeps its lists, and on Vita a list owns its
+	// VBOs: after the grid shrinks, lists past the new end would hold their
+	// meshes forever. Emptying them only drops contents, not the names. Only
+	// the old grid's lists can hold anything (renderer i owns lists 3i..3i+2):
+	// emptying the whole reserved range (26136 lists at 16 chunks) made every
+	// distance change take 1.2-1.5 s.
+	if (previousRenderers > 0)
+		renderDeleteDisplayLists(glRenderListBase, previousRenderers * 3);
+	const long long lrListsNs = System::nanoTime();
+	// Grid from the render-distance option, up to the radius the display
+	// lists were reserved for in the constructor.
+	{
+		const int_t radius = Config::limit(Config::getRenderDistanceFine() / 16, 2, PLATFORM_VISIBLE_CHUNK_RADIUS);
+		renderChunksWide = radius * 2 + 1;
+		// Layers around the player from the Vertical Distance option; 8 is
+		// the whole column (no sections vanishing above or below).
+		renderChunksTall = Config::limit(mc->gameSettings->verticalSections, 3, PLATFORM_VERTICAL_CHUNK_COUNT);
+		renderChunksDeep = radius * 2 + 1;
+	}
+#elif PLATFORM_CONSOLE_LOW || PLATFORM_PC_LEGACY
 	// Fixed low-end profile: use a small horizontal/vertical renderer grid.
 	// Do not derive this from the normal desktop render-distance table.
 	renderChunksWide = PLATFORM_VISIBLE_CHUNK_DIAMETER;
@@ -568,7 +615,7 @@ void RenderGlobal::loadRenderers()
 			// here. Advanced OpenGL relies on the near-to-far order before the first
 			// occlusion-query pass; without this initial sort, chunks can be queried
 			// before closer occluders are in the depth buffer and disappear incorrectly.
-			std::sort(sortedWorldRenderers, sortedWorldRenderers + totalRenderers, EntitySorter(entityliving));
+			sortRenderersByDistance(sortedWorldRenderers, totalRenderers, entityliving);
 		}
 	}
 
@@ -702,7 +749,9 @@ void RenderGlobal::renderEntities(Vec3D *vec3d, ICamera *icamera, float f)
 			platformProfileEntitySpecialBypass();
 #endif
 #if PLATFORM_LIMIT_ENTITY_RENDER_DISTANCE
-		if (entity1 != mc->renderViewEntity && !entity1->ignoreFrustumCheck && dynamic_cast<EntityLiving *>(entity1) != nullptr)
+		// isLiving() is true exactly for EntityLiving, without the dynamic_cast
+		// that walks the class tree (string compares) for every item and block.
+		if (platformPerf().entityCull && entity1 != mc->renderViewEntity && !entity1->ignoreFrustumCheck && entity1->isLiving())
 		{
 			const float dx = static_cast<float>(entity1->posX - vec3d->xCoord);
 			const float dz = static_cast<float>(entity1->posZ - vec3d->zCoord);
@@ -1255,7 +1304,13 @@ int_t RenderGlobal::sortAndRender(EntityLiving *entityliving, int_t i, double d)
 		// culling: the nearest chunks must be rendered first so the depth buffer
 		// holds the closest occluders before farther chunks' boxes are queried.
 		int_t totalRenderers = renderChunksWide * renderChunksTall * renderChunksDeep;
-		std::sort(sortedWorldRenderers, sortedWorldRenderers + totalRenderers, EntitySorter(entityliving));
+#if PLATFORM_PROFILE_RENDER_PHASES && PLATFORM_PC_LEGACY
+		const long_t sortStartNs = System::nanoTime();
+#endif
+		sortRenderersByDistance(sortedWorldRenderers, totalRenderers, entityliving);
+#if PLATFORM_PROFILE_RENDER_PHASES && PLATFORM_PC_LEGACY
+		platformProfileTickPhase("rgSort", System::nanoTime() - sortStartNs);
+#endif
 	}
 
 	// Keep the display-list cache below its high-water mark before the per-frame
@@ -1426,7 +1481,10 @@ int_t RenderGlobal::sortAndRender(EntityLiving *entityliving, int_t i, double d)
 		// driver supports ARB_occlusion_query; it does not mean the feature is
 		// active in GameSettings.
 		int_t totalRenderers = renderChunksWide * renderChunksTall * renderChunksDeep;
-		if (!useOcclusion)
+		// Desktop Legacy never runs occlusion queries (occlusionEnabled stays
+		// false), so nothing ever clears isVisible or sets the query wait: this
+		// pass over every renderer, twice a frame, would rewrite the same values.
+		if (!useOcclusion && !PLATFORM_PC_LEGACY)
 		{
 			for (int_t r = 0; r < totalRenderers; ++r)
 			{
@@ -1549,7 +1607,7 @@ int_t RenderGlobal::renderSortedRenderers(int_t i, int_t j, int_t k, double d)
 #endif
 
 	int_t l = 0;
-	for (int_t i1 = i; i1 < j; i1++)
+	auto considerSorted = [&](int_t i1)
 	{
 		WorldRenderer *sortedRenderer = sortedWorldRenderers[i1];
 #if PLATFORM_PC_LEGACY
@@ -1582,7 +1640,7 @@ int_t RenderGlobal::renderSortedRenderers(int_t i, int_t j, int_t k, double d)
 
 		if (sortedRenderer->skipRenderPass(k) || !sortedRenderer->isInFrustum || cpuOccluded ||
 			(useOcclusion && !sortedRenderer->isVisible))
-			continue;
+			return;
 
 #if PLATFORM_PS2
 		if (ps2CullTerrainByFog &&
@@ -1592,7 +1650,7 @@ int_t RenderGlobal::renderSortedRenderers(int_t i, int_t j, int_t k, double d)
 #ifdef PS2_OPTIMIZATION_VALIDATION
 			Ps2OptimizationValidation::terrainFogCull(k);
 #endif
-			continue;
+			return;
 		}
 #endif
 
@@ -1610,6 +1668,23 @@ int_t RenderGlobal::renderSortedRenderers(int_t i, int_t j, int_t k, double d)
 			l++;
 		}
 #endif
+	};
+#if defined(VITA_PLATFORM) && PC_LEGACY_CPU_SECTION_OCCLUSION
+	// A section the walk did not mark is never drawn, so visit only the marked
+	// ones (a few hundred), in sorted order, instead of reading two cache lines
+	// of each of the ~2300 renderers per pass. The F3 counters need every
+	// renderer, so the full scan stays while they are on screen.
+	if (i == 0 && j == renderChunksWide * renderChunksTall * renderChunksDeep &&
+		!mc->gameSettings->showDebugInfo && pcLegacyVisibleSortedOrder(pcLegacyVisibleOrder))
+	{
+		for (int_t i1 : pcLegacyVisibleOrder)
+			considerSorted(i1);
+	}
+	else
+#endif
+	{
+		for (int_t i1 = i; i1 < j; i1++)
+			considerSorted(i1);
 	}
 
 	double d1 = entityliving->lastTickPosX + (entityliving->posX - entityliving->lastTickPosX) * d;
@@ -3908,6 +3983,16 @@ void RenderGlobal::playAuxSFX(EntityPlayer *entityplayer, int_t i, int_t j, int_
 
 void RenderGlobal::clipRenderersByFrustrum(ICamera *icamera, float f)
 {
+#if PLATFORM_PC_LEGACY
+	pcLegacyVisibilityFrustum = icamera;
+#endif
+#if defined(VITA_PLATFORM) && PC_LEGACY_CPU_SECTION_OCCLUSION
+	// The section walk (updatePcLegacySectionVisibility) tests every section it
+	// enters, the camera's and its own fallbacks included; testing them all
+	// here as well doubled the work. Sections it does not reach are not drawn.
+	frustrumCheckOffset++;
+	return;
+#endif
 	int_t total = renderChunksWide * renderChunksTall * renderChunksDeep;
 	for (int_t i = 0; i < total; i++)
 	{
@@ -3944,7 +4029,7 @@ void RenderGlobal::clipRenderersByFrustrum(ICamera *icamera, float f)
 		// never on whether a mesh exists, so testing an empty renderer is both
 		// valid and cheap: the full grid is 75 boxes against six float planes.
 		worldRenderers[i]->updateInFrustrum(icamera);
-#elif PLATFORM_WII
+#elif PLATFORM_WII || defined(VITA_PLATFORM)
 		// Drop vanilla's `& 0xf` re-test throttle, but keep the
 		// skipAllRenderPasses() gate. The PS2 rationale above applies only in
 		// part here, and the two halves are worth separating.
@@ -4022,8 +4107,24 @@ void RenderGlobal::renderAllRenderLists(int_t pass, double partialTick)
 		mc->entityRenderer->enableLightmap(partialTick);
 	for (int_t i = 0; i < 4; i++)
 	{
-		if (allRenderLists[i] != nullptr)
-			allRenderLists[i]->render();
+		if (allRenderLists[i] == nullptr)
+			continue;
+		allRenderLists[i]->render();
+#if PLATFORM_PC
+		// The display lists of a section with baked tile entities (a lobby
+		// full of signs) bind their own texture and return with it: the next
+		// list's terrain then sampled the sign texture, black with the shader
+		// (no alpha test) and see-through without it, depending on which list
+		// came after which (position and view). Terrain atlas and lightmap
+		// back after any list that called display lists.
+		if (allRenderLists[i]->callsDisplayLists() && renderEngine != nullptr)
+		{
+			OpenGlHelper::setActiveTexture(OpenGlHelper::defaultTexUnit);
+			renderEngine->bindTexture(renderEngine->getTexture("/terrain.png"));
+			if (mc != nullptr && mc->entityRenderer != nullptr)
+				mc->entityRenderer->enableLightmap(partialTick);
+		}
+#endif
 	}
 #if PLATFORM_PROFILE_RENDER_PHASES && PLATFORM_TERRAIN_VBO_BATCH
 	// Submission cost of the terrain draws alone (excludes the visibility walk

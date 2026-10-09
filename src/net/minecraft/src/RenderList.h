@@ -4,6 +4,7 @@
 #include <vector>
 #include "java/Type.h"
 #include "platform/PlatformConfig.h"
+#include "pc/render/VitaTerrainBatch.h"
 
 class WorldRenderer;
 
@@ -18,6 +19,11 @@ public:
     void addTerrainRenderer(WorldRenderer *renderer, int_t pass);
     void render();
     void reset();
+#if PLATFORM_PC
+    // A display list (a section with baked tile entities or extra texture
+    // groups) can leave another texture bound when it returns.
+    bool callsDisplayLists() const { return !displayListIds.empty(); }
+#endif
 
 private:
     int originX;

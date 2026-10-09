@@ -19,7 +19,7 @@ ClippingHelper::ClippingHelper()
 // low-CPU profile keeps the original PS2 single-precision shortcut.
 bool ClippingHelper::isBoxInFrustum(double d, double d1, double d2, double d3, double d4, double d5)
 {
-#if PLATFORM_CONSOLE_LOW
+#if PLATFORM_CONSOLE_LOW || defined(VITA_PLATFORM) // camera-relative input, float planes
 	using frustum_real_t = float;
 #else
 	using frustum_real_t = double;
@@ -51,7 +51,7 @@ bool ClippingHelper::isBoxInFrustum(double d, double d1, double d2, double d3, d
 // only the sign of the plane equation is read, never a distance.
 int ClippingHelper::classifyBox(double d, double d1, double d2, double d3, double d4, double d5)
 {
-#if PLATFORM_CONSOLE_LOW
+#if PLATFORM_CONSOLE_LOW || defined(VITA_PLATFORM) // camera-relative input, float planes
 	using frustum_real_t = float;
 #else
 	using frustum_real_t = double;
