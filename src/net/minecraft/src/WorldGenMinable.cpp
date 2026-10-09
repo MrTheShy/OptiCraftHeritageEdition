@@ -53,6 +53,7 @@ bool WorldGenMinable::generate(World *world, Random &random, int_t i, int_t j, i
 	// Block::stone is a fixed pointer; the original re-read blockID through it on
 	// every voxel test.
 	const int_t stoneId = Block::stone->blockID;
+	const int_t replaceMode = world->populationReplaceMode(stoneId, minableBlockId);
 #if PLATFORM_FLOAT_ORE_VEINS
 	const gen_real_t inverseBlockCount = GEN_R(1.0) / static_cast<gen_real_t>(numberOfBlocks);
 #endif
@@ -95,6 +96,34 @@ bool WorldGenMinable::generate(World *world, Random &random, int_t i, int_t j, i
 		int_t l1 = GEN_FLOOR(d6 + r10);
 		int_t i2 = GEN_FLOOR(d7 + r11);
 		int_t j2 = GEN_FLOOR(d8 + r10);
+		// The y and z terms depend only on their own coordinate, yet were
+		// recomputed (a divide each) for every cell of the box. Same
+		// expressions, evaluated once per row; the ceiling is a vein over
+		// ~400 blocks, past which the direct form below still runs.
+		gen_real_t ySq[64];
+		gen_real_t zSq[64];
+		const bool cached = i2 - j1 < 64 && j2 - k1 < 64;
+		if (cached)
+		{
+			for (int_t l2 = j1; l2 <= i2; l2++)
+			{
+#if PLATFORM_FLOAT_ORE_VEINS
+				const gen_real_t d13 = (((gen_real_t)l2 + GEN_R(0.5)) - d7) * inverseR11;
+#else
+				const gen_real_t d13 = (((gen_real_t)l2 + GEN_R(0.5)) - d7) / r11;
+#endif
+				ySq[l2 - j1] = d13 * d13;
+			}
+			for (int_t i3 = k1; i3 <= j2; i3++)
+			{
+#if PLATFORM_FLOAT_ORE_VEINS
+				const gen_real_t d14 = (((gen_real_t)i3 + GEN_R(0.5)) - d8) * inverseR10;
+#else
+				const gen_real_t d14 = (((gen_real_t)i3 + GEN_R(0.5)) - d8) / r10;
+#endif
+				zSq[i3 - k1] = d14 * d14;
+			}
+		}
 		for (int_t k2 = i1; k2 <= l1; k2++)
 		{
 #if PLATFORM_FLOAT_ORE_VEINS
@@ -109,24 +138,41 @@ bool WorldGenMinable::generate(World *world, Random &random, int_t i, int_t j, i
 				continue;
 			for (int_t l2 = j1; l2 <= i2; l2++)
 			{
+				gen_real_t sxy;
+				if (cached)
+				{
+					sxy = sx + ySq[l2 - j1];
+				}
+				else
+				{
 #if PLATFORM_FLOAT_ORE_VEINS
-				gen_real_t d13 = (((gen_real_t)l2 + GEN_R(0.5)) - d7) * inverseR11;
+					gen_real_t d13 = (((gen_real_t)l2 + GEN_R(0.5)) - d7) * inverseR11;
 #else
-				gen_real_t d13 = (((gen_real_t)l2 + GEN_R(0.5)) - d7) / r11;
+					gen_real_t d13 = (((gen_real_t)l2 + GEN_R(0.5)) - d7) / r11;
 #endif
-				gen_real_t sxy = sx + d13 * d13;
+					sxy = sx + d13 * d13;
+				}
 				if (sxy >= GEN_R(1.0))
 					continue;
 				for (int_t i3 = k1; i3 <= j2; i3++)
 				{
+					gen_real_t dz2;
+					if (cached)
+					{
+						dz2 = zSq[i3 - k1];
+					}
+					else
+					{
 #if PLATFORM_FLOAT_ORE_VEINS
-					gen_real_t d14 = (((gen_real_t)i3 + GEN_R(0.5)) - d8) * inverseR10;
+						gen_real_t d14 = (((gen_real_t)i3 + GEN_R(0.5)) - d8) * inverseR10;
 #else
-					gen_real_t d14 = (((gen_real_t)i3 + GEN_R(0.5)) - d8) / r10;
+						gen_real_t d14 = (((gen_real_t)i3 + GEN_R(0.5)) - d8) / r10;
 #endif
-					if (sxy + d14 * d14 < GEN_R(1.0))
+						dz2 = d14 * d14;
+					}
+					if (sxy + dz2 < GEN_R(1.0))
 						world->replaceBlockForPopulation(k2, l2, i3,
-						                                 stoneId, minableBlockId);
+						                                 stoneId, minableBlockId, replaceMode);
 				}
 			}
 		}

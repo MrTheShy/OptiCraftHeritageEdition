@@ -163,6 +163,73 @@ perlin_real_t NoiseGeneratorPerlin::generateNoise(perlin_real_t d, perlin_real_t
             lerp(d6, grad(permutations[i2+1],fx,fy-1.0f,fz-1.0f), grad(permutations[l2+1],fx-1.0f,fy-1.0f,fz-1.0f))));
 }
 
+void NoiseGeneratorPerlin::getCanSpawnHereMasked(TerrainNoiseBuffer &ad, perlin_real_t d, perlin_real_t d1, perlin_real_t d2,
+                                      int_t i, int_t j, int_t k,
+                                      perlin_real_t d3, perlin_real_t d4, perlin_real_t d5, perlin_real_t d6,
+                                      const unsigned char *mask)
+{
+    const terrain_coord_real_t baseX = (terrain_coord_real_t)d;
+    const terrain_coord_real_t baseY = (terrain_coord_real_t)d1;
+    const terrain_coord_real_t baseZ = (terrain_coord_real_t)d2;
+    const terrain_coord_real_t scaleX = (terrain_coord_real_t)d3;
+    const terrain_coord_real_t scaleY = (terrain_coord_real_t)d4;
+    const terrain_coord_real_t scaleZ = (terrain_coord_real_t)d5;
+    const terrain_coord_real_t coordX = (terrain_coord_real_t)xCoord;
+    const terrain_coord_real_t coordY = (terrain_coord_real_t)yCoord;
+    const terrain_coord_real_t coordZ = (terrain_coord_real_t)zCoord;
+
+    int_t i1 = 0;
+    perlin_real_t amp = (perlin_real_t)1.0f / d6;
+    int_t i2 = -1;
+    perlin_real_t d13=0, d15=0, d16=0, d18=0;
+    for (int_t i5 = 0; i5 < i; i5++)
+    {
+        terrain_coord_real_t d20 = baseX + (terrain_coord_real_t)i5 * scaleX + coordX;
+        int_t k5 = floorPerlinCoord(d20);
+        int_t i6 = k5 & 0xff;
+        perlin_real_t fx = (perlin_real_t)(d20 - k5);
+        perlin_real_t d22 = fx*fx*fx*(fx*(fx*6.0f-15.0f)+10.0f);
+        for (int_t j6 = 0; j6 < k; j6++)
+        {
+            terrain_coord_real_t d24 = baseZ + (terrain_coord_real_t)j6 * scaleZ + coordZ;
+            int_t k6 = floorPerlinCoord(d24);
+            int_t l6 = k6 & 0xff;
+            perlin_real_t fz = (perlin_real_t)(d24 - k6);
+            perlin_real_t d25 = fz*fz*fz*(fz*(fz*6.0f-15.0f)+10.0f);
+            bool refreshPending = false;
+            perlin_real_t refreshFy = 0;
+            for (int_t i7 = 0; i7 < j; i7++, i1++)
+            {
+                terrain_coord_real_t d26 = baseY + (terrain_coord_real_t)i7 * scaleY + coordY;
+                int_t j7 = floorPerlinCoord(d26);
+                int_t k7 = j7 & 0xff;
+                perlin_real_t fy = (perlin_real_t)(d26 - j7);
+                if (i7 == 0 || k7 != i2)
+                {
+                    i2 = k7;
+                    refreshPending = true;
+                    refreshFy = fy;
+                }
+                if (!mask[i1])
+                    continue;
+                if (refreshPending)
+                {
+                    refreshPending = false;
+                    const perlin_real_t cy = refreshFy;
+                    int_t j2 = permutations[i6]+i2, k2=permutations[j2]+l6, l2=permutations[j2+1]+l6;
+                    int_t i3 = permutations[i6+1]+i2, k3=permutations[i3]+l6, l3=permutations[i3+1]+l6;
+                    d13 = lerp(d22, grad(permutations[k2],fx,cy,fz), grad(permutations[k3],fx-1.0f,cy,fz));
+                    d15 = lerp(d22, grad(permutations[l2],fx,cy-1.0f,fz), grad(permutations[l3],fx-1.0f,cy-1.0f,fz));
+                    d16 = lerp(d22, grad(permutations[k2+1],fx,cy,fz-1.0f), grad(permutations[k3+1],fx-1.0f,cy,fz-1.0f));
+                    d18 = lerp(d22, grad(permutations[l2+1],fx,cy-1.0f,fz-1.0f), grad(permutations[l3+1],fx-1.0f,cy-1.0f,fz-1.0f));
+                }
+                perlin_real_t d27 = fy*fy*fy*(fy*(fy*6.0f-15.0f)+10.0f);
+                ad[i1] += (terrain_noise_real_t)(lerp(d25, lerp(d27,d13,d15), lerp(d27,d16,d18)) * amp);
+            }
+        }
+    }
+}
+
 void NoiseGeneratorPerlin::getCanSpawnHere(TerrainNoiseBuffer &ad, perlin_real_t d, perlin_real_t d1, perlin_real_t d2,
                                       int_t i, int_t j, int_t k,
                                       perlin_real_t d3, perlin_real_t d4, perlin_real_t d5, perlin_real_t d6)

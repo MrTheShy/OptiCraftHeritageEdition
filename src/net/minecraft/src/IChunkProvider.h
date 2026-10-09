@@ -36,6 +36,8 @@ public:
 		populate(ichunkprovider, i, j);
 		return true;
 	}
+	// Drops a half-run populateStep() task (its column was unloaded).
+	virtual void abandonPopulateTask() {}
 	virtual bool saveChunks(bool flag, IProgressUpdate *iprogressupdate) = 0;
 	virtual bool unload100OldestChunks() = 0;
 	virtual bool canSave() = 0;

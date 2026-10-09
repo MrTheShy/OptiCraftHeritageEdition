@@ -47,6 +47,9 @@ public:
 	};
 
 	ChunkRequestStatus requestChunkDetailed(int_t i, int_t j);
+	// Request outcomes and generation-queue state for the log; resets the counts.
+	void describeStreaming(char *out, int size);
+	std::size_t residentChunkCount() const { return chunkMap.size(); }
 	bool requestChunk(int_t i, int_t j);
 	void serviceAsyncChunkStreaming();
 #endif
@@ -79,6 +82,10 @@ public:
 	void    removeEntityFromLoadedChunks(Entity *entity) override;
 
 private:
+#if PLATFORM_ASYNC_CHUNK_GENERATION
+	ChunkRequestStatus requestChunkDetailedImpl(int_t i, int_t j);
+#endif
+
 	static std::uint64_t chunkKey(int_t i, int_t j);
 	// chunkMap.find for the lookups below, through residentSlots.
 	bool findResidentChunk(int_t i, int_t j, Chunk *&chunk);
@@ -100,6 +107,14 @@ private:
 	long_t currentWorldTime() const;
 	bool   isOutsideUnloadRadius(int_t i, int_t j) const;
 	void   markChunkTopologyChanged();
+	// The 2x2 chunks the column being decorated writes into; never unloaded
+	// mid-decoration. Always false without PLATFORM_DEFERRED_POPULATE.
+	bool   isInPopulateFootprint(int_t i, int_t j) const;
+public:
+	// Per-frame decoration slice, only while a column next to the player waits
+	// (PLATFORM_POPULATE_FRAME_BUDGET_US); ticks keep doing the rest.
+	void   serviceFramePopulate();
+private:
 
 #if PLATFORM_DEFERRED_POPULATE
 	// Deferred decoration queue (see PLATFORM_POPULATE_CHUNKS_PER_TICK). prepareChunk
@@ -109,12 +124,24 @@ private:
 	Chunk *getLoadedChunk(int_t i, int_t j);
 	bool   canPopulateChunk(int_t i, int_t j);
 	void   enqueuePopulate(int_t i, int_t j);
-	void   drainPendingPopulate(int_t budget);
+	void   drainPendingPopulate(int_t budget, bool frameSlice = false);
+public:
+	// Loading screen: every column within `radius` of (centerX, centerZ)
+	// generated or loaded by the async workers while this thread publishes and
+	// decorates what is ready, then all of it decorated. False (nothing done)
+	// without a worker; the caller then preloads column by column.
+	bool   preloadWithWorkers(int_t centerX, int_t centerZ, int_t radius, IProgressUpdate *progress);
+private:
 	bool   populateDeferredBatch(int_t i, int_t j, int_t maxSteps, long_t deadlineNs, int_t &stepsRun);
 	bool   populateDeferredStep(int_t i, int_t j);
 
 	std::deque<std::pair<int_t, int_t>> populateQueue;
 	std::unordered_set<std::uint64_t>   populateQueued;
+	// The queue front is a column the generator decorated part of; it must
+	// finish before any other column can start (populateStep refuses others).
+	bool populateFrontInProgress = false;
+	// The generation queue answered QueueFull and nothing has left it since.
+	bool asyncQueueFull = false;
 #endif
 
 #if PLATFORM_BOUNDED_WORLD || PLATFORM_ASYNC_CHUNK_GENERATION
@@ -128,6 +155,13 @@ private:
 	// Set when the loader is Anvil: the worker then has no region reader, and
 	// requestChunkDetailed() has to keep saved chunks off its queue itself.
 	AnvilChunkLoader *asyncSavedChunkProbe;
+	// Coordinates currently owned by the scheduler (Accepted .. drained), true
+	// once the chunk at that coordinate was published or unloaded on the game
+	// thread after the request. Such a result was produced from older state
+	// (pre-edit NBT, or terrain generated over a since-saved chunk), so the
+	// drain drops it. Bounded by the scheduler queue limit. Game thread only.
+	std::unordered_map<std::uint64_t, bool> asyncRequestStale;
+	void markAsyncRequestStale(std::uint64_t key);
 #endif
 #if PLATFORM_BOUNDED_WORLD
 	// Per-tick synchronous-generation budget (see PLATFORM_GENERATE_CHUNKS_PER_TICK).

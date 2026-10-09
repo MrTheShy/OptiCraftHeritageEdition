@@ -29,6 +29,11 @@ public:
     virtual std::vector<BiomeGenBase *> &getBiomesToSpawnIn();
     virtual BiomeGenBase *getBiomeGenAtChunkCoord(ChunkCoordIntPair *chunkCoord);
     virtual BiomeGenBase *getBiomeGenAt(int_t x, int_t z);
+    // BiomeCacheBlock contents from one layer evaluation: getTemperatures(),
+    // getRainfall() and getBiomeGenAt() each ran the full 1:1 layer chain over
+    // the same 16x16 area. Same values. Returns false without a layer chain.
+    bool fillCacheBlock(int_t x, int_t z, BiomeNoiseBuffer &temperatures,
+                        BiomeNoiseBuffer &rainfall, std::vector<BiomeGenBase *> &biomes);
     virtual double getTemperature(int_t x, int_t z);
 
     virtual BiomeNoiseBuffer &getRainfall(BiomeNoiseBuffer &values,

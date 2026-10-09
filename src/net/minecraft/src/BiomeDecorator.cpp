@@ -1,6 +1,15 @@
 #include "BiomeDecorator.h"
 
+#include <cstdio>
 #include <stdexcept>
+
+#include "java/System.h"
+
+namespace
+{
+// Game-thread time per decoration stage, for ChunkProvider's log line.
+long long g_decorStageNs[32];
+}
 
 #include "BiomeGenBase.h"
 #include "Block.h"
@@ -57,6 +66,27 @@ namespace
 // what fails the build if a stage is added without a name. The work profiler
 // takes these pointers rather than defining an enum of its own for the same
 // reason -- it aggregates by pointer identity, and these are string literals.
+void BiomeDecorator::takeSlowestStages(char *out, int size, double perChunkNs)
+{
+    int written = 0;
+    for (int pick = 0; pick < 4 && written < size; ++pick)
+    {
+        int best = -1;
+        for (int stage = 0; stage < static_cast<int>(DecorationStage::Done); ++stage)
+            if (g_decorStageNs[stage] > 0 && (best < 0 || g_decorStageNs[stage] > g_decorStageNs[best]))
+                best = stage;
+        if (best < 0)
+            break;
+        written += std::snprintf(out + written, size - written, " %s %.1f",
+                                 stageName(static_cast<DecorationStage>(best)), g_decorStageNs[best] / perChunkNs);
+        g_decorStageNs[best] = 0;
+    }
+    if (written == 0 && size > 0)
+        out[0] = '\0';
+    for (long long &ns : g_decorStageNs)
+        ns = 0;
+}
+
 const char *BiomeDecorator::stageName(DecorationStage stage)
 {
     static const char *const names[] = {
@@ -246,7 +276,13 @@ bool BiomeDecorator::advanceDecoration()
         std::uint32_t start;
         explicit StageScope(const DecorationStage *s)
             : stage(s), start(platformProfileRenderPhaseBegin()) {}
-        ~StageScope() { platformProfileDecorWork(start, stageName(*stage)); }
+        ~StageScope()
+        {
+            platformProfileDecorWork(start, stageName(*stage));
+#if MC_LOG_LEVEL > 0
+            g_decorStageNs[static_cast<int>(*stage) & 31] += System::nanoTime() - startNs;
+#endif
+        }
         StageScope(const StageScope &) = delete;
         StageScope &operator=(const StageScope &) = delete;
     } stageScope(&decorationStage);

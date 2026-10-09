@@ -13,6 +13,7 @@
 class Chunk;
 class IChunkProvider;
 class McRegionChunkLoader;
+class AnvilChunkLoader;
 class World;
 
 class ChunkGenerationScheduler
@@ -25,9 +26,14 @@ public:
         // `chunk` holds blocks/light/heightmap, `nbt` the parsed root whose
         // entities the game thread still has to construct.
         LoadedChunk,
+        // Saved Anvil chunk read and parsed on the worker: `nbt` holds the
+        // root, the game thread builds the Chunk from it.
+        LoadedRoot,
         GeneratedData,
         Generated,
-        ReadError
+        ReadError,
+        // Nothing to publish; the provider releases the request.
+        Dropped
     };
 
     enum class RequestStatus
@@ -46,6 +52,8 @@ public:
         Chunk* chunk = nullptr;
         std::vector<byte_t> data;
         std::unique_ptr<NBTTagCompound> nbt;
+        // Worker time spent on this result (read + inflate + parse), for logs.
+        long long workerNs = 0;
     };
 
     using CoordinatePredicate = bool (*)(void* context, int_t x, int_t z);
@@ -56,6 +64,13 @@ public:
                              World* world = nullptr);
     ~ChunkGenerationScheduler();
 
+    // Saved Anvil chunks are then read on the worker (ResultKind::LoadedRoot)
+    // instead of the game thread. Call before start(); the loader must outlive
+    // stop().
+    void setAnvilLoader(AnvilChunkLoader* loader);
+    // Another worker thread with its own generator (owned). Call before start();
+    // ignored past PLATFORM_ASYNC_GENERATION_WORKERS.
+    void addWorker(IChunkProvider* ownedGenerator);
     bool start();
     void stop();
     bool active() const;
@@ -68,11 +83,16 @@ public:
     bool popResult(Result& out);
     void complete(int_t x, int_t z);
     void queueSizes(int_t& pending, int_t& completed) const;
+    // One-line state for the log: queue sizes and how long each worker has
+    // been on its current job (-1 = idle).
+    void describe(char* out, int size) const;
 
 private:
     static std::uint64_t key(int_t x, int_t z);
     static void* threadEntry(void* argument);
-    void runWorker();
+    void runWorker(int workerIndex);
+    void noteGenerated(long long ns);
+    void pushDropped(int_t x, int_t z);
 
     struct Impl;
     Impl* impl_;

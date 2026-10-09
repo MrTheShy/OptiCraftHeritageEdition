@@ -25,6 +25,12 @@ public:
     TerrainNoiseBuffer &generateNoiseOctaves(TerrainNoiseBuffer &noise, double x, double y, double z,
                                              int_t sizeX, int_t sizeY, int_t sizeZ,
                                              double scaleX, double scaleY, double scaleZ);
+    // generateNoiseOctaves (3D) evaluated only where mask[] is non-zero; the
+    // other entries are 0. Same values where computed.
+    TerrainNoiseBuffer &generateNoiseOctavesMasked(TerrainNoiseBuffer &noise, double x, double y, double z,
+                                                   int_t sizeX, int_t sizeY, int_t sizeZ,
+                                                   double scaleX, double scaleY, double scaleZ,
+                                                   const unsigned char *mask);
 #if PLATFORM_FLOAT_TERRAIN_NOISE
     TerrainNoiseBuffer &generateNoiseOctavesFloat(TerrainNoiseBuffer &noise, terrain_coord_real_t x, terrain_coord_real_t y, terrain_coord_real_t z,
                                                   int_t sizeX, int_t sizeY, int_t sizeZ,

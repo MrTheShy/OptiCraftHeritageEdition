@@ -2964,6 +2964,22 @@ void Minecraft::preloadWorld(const std::string &s)
 #endif
     };
 
+    // The generation workers fill the square in parallel while this thread
+    // publishes and decorates (the column-by-column loop below left both
+    // workers idle: 30-50 s on the Vita to enter the Nether).
+    bool preloaded = false;
+#if PLATFORM_ASYNC_CHUNK_GENERATION
+    if (ChunkProvider *streaming = dynamic_cast<ChunkProvider *>(ichunkprovider))
+        preloaded = streaming->preloadWithWorkers(chunkcoordinates.x >> 4, chunkcoordinates.z >> 4, c / 16, loadingScreen);
+#endif
+    if (preloaded)
+    {
+        const long_t lightStartNs = System::nanoTime();
+        while (theWorld->updatingLighting()) {}
+        MC_LOG_INFO("chunk", "preload: light %.1f s\n", (System::nanoTime() - lightStartNs) / 1.0e9);
+    }
+    else
+    {
     for (int_t k = -c; k <= c; k += 16)
     {
         for (int_t l = -c; l <= c; l += 16)
@@ -2971,6 +2987,7 @@ void Minecraft::preloadWorld(const std::string &s)
             loadingScreen->setLoadingProgress((i++ * 100) / j);
             preloadColumn(chunkcoordinates.x + k, chunkcoordinates.z + l);
         }
+    }
     }
 
     // A dimension with a resident region (the End on consoles) gets the whole

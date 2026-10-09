@@ -21,6 +21,9 @@
 class RegionFile
 {
 public:
+    // Writer-thread time since the last call: deflate, data sectors, header
+    // entries (ns), chunk writes. For the full-save log line.
+    static void takeWriteStats(long long out[4]);
     enum class ReadStatus
     {
         Missing,

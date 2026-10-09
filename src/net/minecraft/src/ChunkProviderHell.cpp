@@ -1,5 +1,7 @@
 #include "java/Math.h"
 #include "ChunkProviderHell.h"
+
+#include <cstring>
 #include "java/Arithmetic.h"
 
 #include <cmath>
@@ -221,6 +223,42 @@ Chunk *ChunkProviderHell::prepareChunk(int_t i, int_t j)
 	return provideChunk(i, j);
 }
 
+bool ChunkProviderHell::generateAsyncChunkData(int_t i, int_t j, std::vector<byte_t> &data)
+{
+	const ulong_t chunkSeedBits = static_cast<ulong_t>(static_cast<long_t>(i)) * 0x4f9939f508ULL
+	                            + static_cast<ulong_t>(static_cast<long_t>(j)) * 0x1ef1565bd5ULL;
+	hellRNG.setSeed(JavaArithmetic::longFromBits(chunkSeedBits));
+	data.assign(32768 + sizeof(long_t), 0);
+	generateHellTerrain(i, j, data.data());
+	replaceHellBlocks(i, j, data.data());
+	caveGenerator->generate(this, worldObj, i, j, data.data());
+	const long_t state = hellRNG.rawState();
+	std::memcpy(data.data() + 32768, &state, sizeof(state));
+	return true;
+}
+
+Chunk *ChunkProviderHell::finishAsyncChunkData(int_t i, int_t j, std::vector<byte_t> &data)
+{
+	if (data.size() < 32768 + sizeof(long_t))
+		return nullptr;
+	long_t state;
+	std::memcpy(&state, data.data() + 32768, sizeof(state));
+	hellRNG.setRawState(state);
+	data.resize(32768);
+	netherBridgeGenerator->generate(this, worldObj, i, j, data.data());
+	Chunk *chunk = new Chunk(worldObj, data, i, j);
+	worldObj->getWorldChunkManager()->loadBlockGeneratorData(
+		biomesForGeneration, JavaArithmetic::intMul(i, 16), JavaArithmetic::intMul(j, 16), 16, 16);
+	std::vector<byte_t> &biomeArray = chunk->getBiomeArray();
+	for (std::size_t index = 0; index < biomeArray.size() && index < biomesForGeneration.size(); ++index)
+	{
+		if (biomesForGeneration[index] != nullptr)
+			biomeArray[index] = static_cast<byte_t>(biomesForGeneration[index]->biomeID);
+	}
+	chunk->resetRelightChecks();
+	return chunk;
+}
+
 Chunk *ChunkProviderHell::provideChunk(int_t i, int_t j)
 {
 	const ulong_t chunkSeedBits = static_cast<ulong_t>(static_cast<long_t>(i)) * 0x4f9939f508ULL
@@ -417,6 +455,102 @@ void ChunkProviderHell::populate(IChunkProvider *ichunkprovider, int_t i, int_t 
 	}
 
 	BlockSand::fallInstantly = false;
+}
+
+bool ChunkProviderHell::populateStep(IChunkProvider *ichunkprovider, int_t i, int_t j)
+{
+	PopulateTask &task = populateTask;
+	if (!task.active || task.chunkX != i || task.chunkZ != j)
+	{
+		task.active = true;
+		task.chunkX = i;
+		task.chunkZ = j;
+		task.stage = 0;
+		task.index = 0;
+		task.random = hellRNG;
+	}
+	Random &rng = task.random;
+	const int_t k = JavaArithmetic::intMul(i, 16);
+	const int_t l = JavaArithmetic::intMul(j, 16);
+	// Same draws, same order as populate(); stage 2-4 counts are drawn on entry.
+	BlockSand::fallInstantly = true;
+	switch (task.stage)
+	{
+	case 0:
+		netherBridgeGenerator->generateStructuresInChunk(worldObj, rng, i, j);
+		task.stage = 1;
+		break;
+	case 1:
+		for (int_t n = 0; n < 8; n++)
+		{
+			int_t x = JavaArithmetic::intAdd(JavaArithmetic::intAdd(k, rng.nextInt(16)), 8);
+			int_t y = rng.nextInt(120) + 4;
+			int_t z = JavaArithmetic::intAdd(JavaArithmetic::intAdd(l, rng.nextInt(16)), 8);
+			WorldGenHellLava(Block::lavaMoving->blockID).generate(worldObj, rng, x, y, z);
+		}
+		task.stage = 2;
+		break;
+	case 2:
+	{
+		const int_t fires = rng.nextInt(rng.nextInt(10) + 1) + 1;
+		for (int_t n = 0; n < fires; n++)
+		{
+			int_t x = JavaArithmetic::intAdd(JavaArithmetic::intAdd(k, rng.nextInt(16)), 8);
+			int_t y = rng.nextInt(120) + 4;
+			int_t z = JavaArithmetic::intAdd(JavaArithmetic::intAdd(l, rng.nextInt(16)), 8);
+			WorldGenFire().generate(worldObj, rng, x, y, z);
+		}
+		task.stage = 3;
+		task.index = 0;
+		task.count = rng.nextInt(rng.nextInt(10) + 1);
+		break;
+	}
+	case 3:
+		if (task.index < task.count)
+		{
+			int_t x = JavaArithmetic::intAdd(JavaArithmetic::intAdd(k, rng.nextInt(16)), 8);
+			int_t y = rng.nextInt(120) + 4;
+			int_t z = JavaArithmetic::intAdd(JavaArithmetic::intAdd(l, rng.nextInt(16)), 8);
+			WorldGenGlowStone1().generate(worldObj, rng, x, y, z);
+			task.index++;
+		}
+		if (task.index >= task.count)
+		{
+			task.stage = 4;
+			task.index = 0;
+		}
+		break;
+	case 4:
+	{
+		int_t x = JavaArithmetic::intAdd(JavaArithmetic::intAdd(k, rng.nextInt(16)), 8);
+		int_t y = rng.nextInt(128);
+		int_t z = JavaArithmetic::intAdd(JavaArithmetic::intAdd(l, rng.nextInt(16)), 8);
+		WorldGenGlowStone2().generate(worldObj, rng, x, y, z);
+		if (++task.index >= 10)
+			task.stage = 5;
+		break;
+	}
+	default:
+		if (rng.nextInt(1) == 0)
+		{
+			int_t x = JavaArithmetic::intAdd(JavaArithmetic::intAdd(k, rng.nextInt(16)), 8);
+			int_t y = rng.nextInt(128);
+			int_t z = JavaArithmetic::intAdd(JavaArithmetic::intAdd(l, rng.nextInt(16)), 8);
+			WorldGenFlowers(Block::mushroomBrown->blockID).generate(worldObj, rng, x, y, z);
+		}
+		if (rng.nextInt(1) == 0)
+		{
+			int_t x = JavaArithmetic::intAdd(JavaArithmetic::intAdd(k, rng.nextInt(16)), 8);
+			int_t y = rng.nextInt(128);
+			int_t z = JavaArithmetic::intAdd(JavaArithmetic::intAdd(l, rng.nextInt(16)), 8);
+			WorldGenFlowers(Block::mushroomRed->blockID).generate(worldObj, rng, x, y, z);
+		}
+		task.active = false;
+		hellRNG = rng;
+		break;
+	}
+	BlockSand::fallInstantly = false;
+	return !task.active;
 }
 
 std::vector<SpawnListEntry> *ChunkProviderHell::getPossibleCreatures(const EnumCreatureType &type, int_t x, int_t y, int_t z)

@@ -82,6 +82,44 @@ TerrainNoiseBuffer &NoiseGeneratorOctaves::generateNoiseOctaves(
     return noise;
 }
 
+TerrainNoiseBuffer &NoiseGeneratorOctaves::generateNoiseOctavesMasked(
+    TerrainNoiseBuffer &noise, double x, double y, double z,
+    int_t sizeX, int_t sizeY, int_t sizeZ,
+    double scaleX, double scaleY, double scaleZ,
+    const unsigned char *mask)
+{
+    const std::size_t requiredSize = checkedNoiseVolumeSize(sizeX, sizeY, sizeZ);
+    noise.resize(requiredSize);
+    std::fill(noise.begin(), noise.end(), static_cast<terrain_noise_real_t>(0));
+    double amplitude = skippedOctaveAmplitude(firstOctave);
+    for (int_t i = firstOctave; i < octaves; ++i)
+    {
+        double octaveX = x * amplitude * scaleX;
+        const double octaveY = y * amplitude * scaleY;
+        double octaveZ = z * amplitude * scaleZ;
+        long_t wrappedX = MathHelper::floor_double_long(octaveX);
+        long_t wrappedZ = MathHelper::floor_double_long(octaveZ);
+        octaveX -= static_cast<double>(wrappedX);
+        octaveZ -= static_cast<double>(wrappedZ);
+        wrappedX %= 16777216LL;
+        wrappedZ %= 16777216LL;
+        octaveX += static_cast<double>(wrappedX);
+        octaveZ += static_cast<double>(wrappedZ);
+        generatorCollection[i]->getCanSpawnHereMasked(
+            noise,
+            static_cast<perlin_real_t>(octaveX),
+            static_cast<perlin_real_t>(octaveY),
+            static_cast<perlin_real_t>(octaveZ),
+            sizeX, sizeY, sizeZ,
+            static_cast<perlin_real_t>(scaleX * amplitude),
+            static_cast<perlin_real_t>(scaleY * amplitude),
+            static_cast<perlin_real_t>(scaleZ * amplitude),
+            static_cast<perlin_real_t>(amplitude),
+            mask);
+        amplitude /= 2.0;
+    }
+    return noise;
+}
 
 #if PLATFORM_FLOAT_TERRAIN_NOISE
 TerrainNoiseBuffer &NoiseGeneratorOctaves::generateNoiseOctavesFloat(

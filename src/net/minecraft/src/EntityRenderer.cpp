@@ -107,6 +107,11 @@ namespace
 {
     int platformPrefetchRadius(int renderDistance)
     {
+#if PLATFORM_PC_LEGACY && defined(VITA_PLATFORM)
+        // Matches ChunkProvider::setChunkLoadRadiusFromRenderDistance.
+        (void)renderDistance;
+        return std::max(Config::getRenderDistanceFine() / 16 + 1, (int)PLATFORM_CHUNK_CACHE_RADIUS);
+#endif
         renderDistance &= 3;
         int blocks = 64 << (3 - renderDistance);
         if (blocks > 400)
@@ -190,7 +195,7 @@ namespace
                     const int absDx = dx < 0 ? -dx : dx;
                     const int absDz = dz < 0 ? -dz : dz;
                     const int forward = dx * forwardX + dz * forwardZ;
-#if PLATFORM_PS2
+#if PLATFORM_PS2 || defined(VITA_PLATFORM)
                     const int chebyshevDistance = std::max(absDx, absDz);
                     const int manhattanDistance = absDx + absDz;
                     const int score = -chebyshevDistance * 64 - manhattanDistance * 4 + forward * 2;
@@ -1683,6 +1688,7 @@ void EntityRenderer::renderWorld(float partialTicks, int64_t renderTimeLimitNano
 #if PLATFORM_ASYNC_CHUNK_GENERATION
         chunkProviderMap->serviceAsyncChunkStreaming();
 #endif
+        chunkProviderMap->serviceFramePopulate();
 #if PLATFORM_INCREMENTAL_CHUNK_GENERATION
         chunkProviderMap->serviceFrameGeneration();
 #endif

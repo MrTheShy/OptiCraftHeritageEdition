@@ -146,6 +146,9 @@ public:
 
 	Chunk *getChunkFromBlockCoords(int_t i, int_t j);
 	Chunk *getChunkFromChunkCoords(int_t i, int_t j);
+	// Mesh-dependency fetch: queues a missing chunk on the async worker instead
+	// of generating it on the game thread. True when the chunk was loaded here.
+	bool requestChunkForMesh(int_t i, int_t j);
 	virtual bool setBlockAndMetadata(int_t i, int_t j, int_t k, int_t l, int_t i1);
 	virtual bool setBlock(int_t i, int_t j, int_t k, int_t l);
 	Material *getBlockMaterial(int_t i, int_t j, int_t k) override final;
@@ -169,6 +172,13 @@ public:
 	bool setBlockAndMetadataForPopulation(int_t x, int_t y, int_t z, int_t blockId, int_t metadata);
 	bool replaceBlockForPopulation(int_t x, int_t y, int_t z,
 	                               int_t expectedId, int_t newId);
+	// The same call split for vein loops: the id-pair checks, which only depend
+	// on the two ids, run once per vein (populationReplaceMode), the per-block
+	// part per cell. -1 = never replaces, 0 = setBlock path, 1 = direct
+	// replacement, 2 = direct replacement of a falling block.
+	int_t populationReplaceMode(int_t expectedId, int_t newId) const;
+	bool replaceBlockForPopulation(int_t x, int_t y, int_t z,
+	                               int_t expectedId, int_t newId, int_t mode);
 	// Chunk-local decoration (PLATFORM_CHUNK_LOCAL_DECORATION): while bound,
 	// block reads and writes are answered from the generator's buffer for the
 	// chunk being generated and never reach the chunk provider. See

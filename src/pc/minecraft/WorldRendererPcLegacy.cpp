@@ -329,11 +329,14 @@ bool WorldRenderer::pcLegacyBuildRendererStep(int_t blockBudget)
             if ((sourceAvailability & sourceBit) != 0u)
                 continue;
 
-            worldObj->getChunkFromChunkCoords(ccx, ccz);
+            // Queued requests cost nothing and do not count as work, so the
+            // scheduler moves on to other renderers until the chunk arrives.
             ++requestedDependencies;
-            pcLegacyStepDidWork = true;
-            if (requestedDependencies >= PC_LEGACY_RENDERER_DEPENDENCY_REQUESTS_PER_STEP)
+            if (worldObj->requestChunkForMesh(ccx, ccz))
+            {
+                pcLegacyStepDidWork = true;
                 return false;
+            }
         }
     }
     if (requestedDependencies > 0)

@@ -1,9 +1,12 @@
 #include "platform/WorkProfiler.h"
+#include "platform/StatCounter.h"
 #include "RegionFile.h"
 #include "platform/Log.h"
 #include "java/Arithmetic.h"
 #include "platform/PlatformConfig.h"
 
+#include <atomic>
+#include <chrono>
 #include <cstring>
 #include <ctime>
 #include <limits>
@@ -311,6 +314,24 @@ RegionFile::~RegionFile()
     close();
 }
 
+namespace
+{
+StatCounter g_deflateNs{0}, g_dataNs{0}, g_headerNs{0}, g_writes{0};
+long long nowNs()
+{
+    return std::chrono::duration_cast<std::chrono::nanoseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+}
+
+void RegionFile::takeWriteStats(long long out[4])
+{
+    out[0] = g_deflateNs.exchange(0);
+    out[1] = g_dataNs.exchange(0);
+    out[2] = g_headerNs.exchange(0);
+    out[3] = g_writes.exchange(0);
+}
+
 int_t RegionFile::getSizeDelta()
 {
     std::lock_guard<std::mutex> lock(mtx);
@@ -331,18 +352,22 @@ int_t RegionFile::getOffset(int_t x, int_t z)
 
 void RegionFile::setOffset(int_t x, int_t z, int_t value)
 {
+    const long long startNs = nowNs();
     offsets[x + z * 32] = value;
     dataFile.clear();
     dataFile.seekp((x + z * 32) * 4);
     writeInt32BE(dataFile, value);
+    g_headerNs += nowNs() - startNs;
 }
 
 void RegionFile::setTimestamp(int_t x, int_t z, int_t value)
 {
+    const long long startNs = nowNs();
     timestamps[x + z * 32] = value;
     dataFile.clear();
     dataFile.seekp(4096 + (x + z * 32) * 4);
     writeInt32BE(dataFile, value);
+    g_headerNs += nowNs() - startNs;
 }
 
 bool RegionFile::hasChunk(int_t x, int_t z)
@@ -495,9 +520,12 @@ void RegionFile::write(int_t x, int_t z, const byte_t *rawData, int_t rawLength)
 #else
         const int compressionLevel = Z_DEFAULT_COMPRESSION;
 #endif
+        long long phaseNs = nowNs();
         int status = compress2(reinterpret_cast<Bytef *>(ioScratch.data()), &compLen,
                                reinterpret_cast<const Bytef *>(rawData),
                                (uLong)rawLength, compressionLevel);
+        g_deflateNs += nowNs() - phaseNs;
+        g_writes++;
         if (status != Z_OK)
             return;
 
@@ -661,11 +689,13 @@ void RegionFile::write(int_t x, int_t z, const byte_t *rawData, int_t rawLength)
 
 void RegionFile::writeSector(int_t sectorNum, const byte_t *data, int_t length)
 {
+    const long long startNs = nowNs();
     dataFile.clear();
     dataFile.seekp(static_cast<long_t>(JavaArithmetic::intMul(sectorNum, 4096)));
     writeInt32BE(dataFile, length + 1);
     writeByte(dataFile, 2); // version 2 = zlib deflate
     dataFile.write((char*)data, length);
+    g_dataNs += nowNs() - startNs;
 }
 
 void RegionFile::close()

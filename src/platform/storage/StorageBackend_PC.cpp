@@ -46,7 +46,13 @@ bool renameFile(const std::string& from, const std::string& to)
 }
 
 bool supportsAtomicRename() { return true; }
+#ifdef VITA_PLATFORM
+// One app at a time, as on the PS2. Reading session.lock from ux0 before every
+// chunk save waited behind the region writer: 330-390 ms tick spikes.
+bool supportsSessionLocks() { return false; }
+#else
 bool supportsSessionLocks() { return true; }
+#endif
 
 bool readFile(const std::string& path, std::vector<unsigned char>& out)
 {

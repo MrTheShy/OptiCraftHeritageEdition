@@ -286,6 +286,28 @@ std::vector<BiomeGenBase *> &WorldChunkManager::getBiomesForGeneration(std::vect
     return values;
 }
 
+bool WorldChunkManager::fillCacheBlock(int_t x, int_t z, BiomeNoiseBuffer &temperatures,
+                                       BiomeNoiseBuffer &rainfall, std::vector<BiomeGenBase *> &biomes)
+{
+    if (!biomeIndexLayer)
+        return false;
+    IntCache::resetIntCache();
+    const int_t count = 256;
+    const std::vector<int_t> &ids = biomeIdArea(x, z, 16, 16);
+    requireLayerArea(ids, count);
+    constexpr biome_noise_real_t inverseBiomeFixedPoint = static_cast<biome_noise_real_t>(1.0f / 65536.0f);
+    for (int_t i = 0; i < count; ++i)
+    {
+        BiomeGenBase *biome = biomeFromId(ids[i]);
+        biomes[i] = biome;
+        biome_noise_real_t temp = static_cast<biome_noise_real_t>(biome->getIntTemperature()) * inverseBiomeFixedPoint;
+        temperatures[i] = temp > 1.0f ? 1.0f : temp;
+        biome_noise_real_t rain = static_cast<biome_noise_real_t>(biome->getIntRainfall()) * inverseBiomeFixedPoint;
+        rainfall[i] = rain > 1.0f ? 1.0f : rain;
+    }
+    return true;
+}
+
 std::vector<BiomeGenBase *> &WorldChunkManager::loadBlockGeneratorData(std::vector<BiomeGenBase *> &values,
                                                                         int_t x, int_t z,
                                                                         int_t width, int_t height)

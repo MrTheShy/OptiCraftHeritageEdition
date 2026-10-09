@@ -1,4 +1,38 @@
 #include "ChunkProviderGenerate.h"
+#include "platform/StatCounter.h"
+#include <atomic>
+#include <chrono>
+
+namespace
+{
+// Worker time per generation phase, read by the scheduler's 10 s log line.
+StatCounter g_genPhaseNs[ChunkProviderGenerate::GenPhaseCount];
+
+[[maybe_unused]] long long genNowNs()
+{
+	return std::chrono::duration_cast<std::chrono::nanoseconds>(
+		std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+
+#if MC_LOG_LEVEL > 0
+struct GenPhaseTimer
+{
+	int phase;
+	long long start = genNowNs();
+	explicit GenPhaseTimer(int p) : phase(p) {}
+	~GenPhaseTimer() { g_genPhaseNs[phase] += genNowNs() - start; }
+};
+#else
+// Only the log line reads these: no clock reads in silent builds.
+struct GenPhaseTimer { explicit GenPhaseTimer(int) {} };
+#endif
+}
+
+void ChunkProviderGenerate::takeGenPhaseStats(long long out[GenPhaseCount])
+{
+	for (int phase = 0; phase < GenPhaseCount; ++phase)
+		out[phase] = g_genPhaseNs[phase].exchange(0);
+}
 #include "java/Arithmetic.h"
 
 #include <algorithm>
@@ -142,17 +176,24 @@ void ChunkProviderGenerate::generateTerrain(int_t chunkX, int_t chunkZ, byte_t *
 	constexpr int_t noiseHeight = 17;
 	const int_t noiseDepth = horizontalCells + 1;
 
+	{
+	GenPhaseTimer timer(GenPhaseBiomeLayers);
 	generationWorldChunkManager()->getBiomesForGeneration(
 		biomesForGeneration,
 		JavaArithmetic::intSub(JavaArithmetic::intMul(chunkX, 4), 2),
 		JavaArithmetic::intSub(JavaArithmetic::intMul(chunkZ, 4), 2),
 		noiseWidth + 5,
 		noiseDepth + 5);
+	}
 
+	{
+	GenPhaseTimer timer(GenPhaseNoise);
 	field_4180_q = generateNoiseField(field_4180_q,
 		JavaArithmetic::intMul(chunkX, horizontalCells), 0,
 		JavaArithmetic::intMul(chunkZ, horizontalCells),
 		noiseWidth, noiseHeight, noiseDepth);
+	}
+	GenPhaseTimer fillTimer(GenPhaseFill);
 
 	for (int_t cellX = 0; cellX < horizontalCells; ++cellX)
 	{
@@ -275,7 +316,9 @@ void ChunkProviderGenerate::replaceBlocksForBiome(int_t chunkX, int_t chunkZ, by
 #if PLATFORM_FLOAT_TERRAIN_NOISE
 				if (y <= rand.nextInt5())
 #else
-				if (y <= rand.nextInt(5))
+				// y >= 5 can never be bedrock (nextInt(5) <= 4); only the draw
+				// sequence matters there, and skipInt5 keeps it without dividing.
+				if (y >= 5 ? (rand.skipInt5(), false) : y <= rand.nextInt5())
 #endif
 				{
 					blocks[index] = static_cast<byte_t>(Block::bedrock->blockID);
@@ -364,11 +407,15 @@ void ChunkProviderGenerate::generateBaseTerrain(int_t chunkX, int_t chunkZ, byte
 
 	WorldLoadTrace::step("biomes");
 #if !PLATFORM_USE_HEIGHTMAP_TERRAIN
+	{
+	GenPhaseTimer timer(GenPhaseBlockBiomes);
 	generationWorldChunkManager()->loadBlockGeneratorData(
 		biomesForGeneration,
 		JavaArithmetic::intMul(chunkX, 16),
 		JavaArithmetic::intMul(chunkZ, 16), 16, 16);
+	}
 #endif
+	GenPhaseTimer timer(GenPhaseSurface);
 	replaceBlocksForBiome(chunkX, chunkZ, blocks, biomesForGeneration.data());
 
 	for (std::size_t index = 0; index < 256 && index < biomesForGeneration.size(); ++index)
@@ -524,8 +571,14 @@ bool ChunkProviderGenerate::generateAsyncChunkData(int_t chunkX, int_t chunkZ, s
 	byte_t *blocks = data.data();
 	byte_t *biomeIds = data.data() + blockCount;
 	generateBaseTerrain(chunkX, chunkZ, blocks, biomeIds);
-	generateCaves(chunkX, chunkZ, blocks);
-	generateRavines(chunkX, chunkZ, blocks);
+	{
+		GenPhaseTimer timer(GenPhaseCaves);
+		generateCaves(chunkX, chunkZ, blocks);
+	}
+	{
+		GenPhaseTimer timer(GenPhaseRavines);
+		generateRavines(chunkX, chunkZ, blocks);
+	}
 	return true;
 }
 
@@ -758,7 +811,7 @@ TerrainNoiseBuffer &ChunkProviderGenerate::initializeNoiseField(TerrainNoiseBuff
 	field_4182_g = field_922_a.getBiomeGenForCoordsFloat(field_4182_g, x, z, width, depth, 1.121f, 1.121f, 0.5f);
 	field_4181_h = field_921_b.getBiomeGenForCoordsFloat(field_4181_h, x, z, width, depth, 200.0f, 200.0f, 0.5f);
 #else
-	field_4182_g = field_922_a.getBiomeGenForCoords(field_4182_g, x, z, width, depth, 1.121, 1.121, 0.5);
+	// field_4182_g (field_922_a at 1.121) is never read; Java computed it anyway.
 	field_4181_h = field_921_b.getBiomeGenForCoords(field_4181_h, x, z, width, depth, 200.0, 200.0, 0.5);
 #endif
 #if PLATFORM_FLOAT_TERRAIN_NOISE
@@ -774,10 +827,20 @@ TerrainNoiseBuffer &ChunkProviderGenerate::initializeNoiseField(TerrainNoiseBuff
 #else
 	field_4185_d = field_910_m.generateNoiseOctaves(field_4185_d, static_cast<double>(x), static_cast<double>(y), static_cast<double>(z),
 		width, height, depth, horizontalScale / 80.0, verticalScale / 160.0, horizontalScale / 80.0);
-	field_4184_e = field_912_k.generateNoiseOctaves(field_4184_e, static_cast<double>(x), static_cast<double>(y), static_cast<double>(z),
-		width, height, depth, horizontalScale, verticalScale, horizontalScale);
-	field_4183_f = field_911_l.generateNoiseOctaves(field_4183_f, static_cast<double>(x), static_cast<double>(y), static_cast<double>(z),
-		width, height, depth, horizontalScale, verticalScale, horizontalScale);
+	// The selector picks the low limit below 0, the high one above 1 and blends
+	// only in between, so each 16-octave limit is sampled only where it is read.
+	lowNoiseMask.resize(requiredSize);
+	highNoiseMask.resize(requiredSize);
+	for (std::size_t index = 0; index < requiredSize; ++index)
+	{
+		const terrain_noise_real_t blend = (field_4185_d[index] / static_cast<terrain_noise_real_t>(10.0) + static_cast<terrain_noise_real_t>(1.0)) / static_cast<terrain_noise_real_t>(2.0);
+		lowNoiseMask[index] = !(blend > static_cast<terrain_noise_real_t>(1.0));
+		highNoiseMask[index] = !(blend < static_cast<terrain_noise_real_t>(0.0));
+	}
+	field_4184_e = field_912_k.generateNoiseOctavesMasked(field_4184_e, static_cast<double>(x), static_cast<double>(y), static_cast<double>(z),
+		width, height, depth, horizontalScale, verticalScale, horizontalScale, lowNoiseMask.data());
+	field_4183_f = field_911_l.generateNoiseOctavesMasked(field_4183_f, static_cast<double>(x), static_cast<double>(y), static_cast<double>(z),
+		width, height, depth, horizontalScale, verticalScale, horizontalScale, highNoiseMask.data());
 #endif
 
 	int_t noiseIndex = 0;

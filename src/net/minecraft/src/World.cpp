@@ -1262,6 +1262,39 @@ Chunk* World::getChunkFromChunkCoords(int chunkX, int chunkZ)
     return chunkProvider->provideChunk(chunkX, chunkZ);
 }
 
+bool World::requestChunkForMesh(int_t chunkX, int_t chunkZ)
+{
+#if PLATFORM_ASYNC_CHUNK_GENERATION
+    // provideChunk() generates synchronously inside PLATFORM_GENERATE_SYNC_RADIUS
+    // and outside the load radius (600+ ms on Vita). A renderer can wait a
+    // frame for its neighbour; the player's own chunks still load on demand.
+    if (ChunkProvider *provider = dynamic_cast<ChunkProvider *>(chunkProvider))
+    {
+        // Edge renderers sit one chunk past the load radius: their neighbour
+        // arrives when the player gets closer, never generate it now.
+        if (!findingSpawnPoint && !provider->canChunkExist(chunkX, chunkZ))
+        {
+            platformProfileTickPhase("#meshDepWait", 1);
+            return false;
+        }
+        switch (provider->requestChunkDetailed(chunkX, chunkZ))
+        {
+        case ChunkProvider::ChunkRequestStatus::Accepted:
+        case ChunkProvider::ChunkRequestStatus::AlreadyQueued:
+        case ChunkProvider::ChunkRequestStatus::QueueFull:
+        case ChunkProvider::ChunkRequestStatus::AlreadyLoaded:
+            platformProfileTickPhase("#meshDepWait", 1);
+            return false;
+        default:
+            break; // no worker (Nether/End) or saved data only the game thread reads
+        }
+    }
+#endif
+    PlatformTickPhaseScope phase("meshDep");
+    getChunkFromChunkCoords(chunkX, chunkZ);
+    return true;
+}
+
 bool World::setBlockAndMetadata(int x, int y, int z, int blockId, int metadata)
 {
     if (x < -30000000 || z < -30000000 || x >= 30000000 || z >= 30000000)
@@ -1597,16 +1630,14 @@ void World::flushPopulationLightingBatches()
 bool World::replaceBlockForPopulation(int_t x, int_t y, int_t z,
 	                                  int_t expectedId, int_t newId)
 {
-    if (y < 0 || y >= WorldHeight::HEIGHT || expectedId < 0 || expectedId >= Block::BLOCK_REGISTRY_SIZE ||
-        newId < 0 || newId >= Block::BLOCK_REGISTRY_SIZE || expectedId == newId)
-        return false;
+    return replaceBlockForPopulation(x, y, z, expectedId, newId, populationReplaceMode(expectedId, newId));
+}
 
-    if (chunkLocalDecoration.isActive())
-    {
-        if (chunkLocalDecoration.getBlockId(x, y, z) != expectedId)
-            return false;
-        return chunkLocalDecoration.setBlock(x, y, z, newId, 0);
-    }
+int_t World::populationReplaceMode(int_t expectedId, int_t newId) const
+{
+    if (expectedId < 0 || expectedId >= Block::BLOCK_REGISTRY_SIZE ||
+        newId < 0 || newId >= Block::BLOCK_REGISTRY_SIZE || expectedId == newId)
+        return -1;
 
     // This shortcut is valid only when neither the light field nor tile-entity
     // ownership can change. All other cases retain vanilla setBlock semantics.
@@ -1628,8 +1659,25 @@ bool World::replaceBlockForPopulation(int_t x, int_t y, int_t z,
 		((expectedId == Block::dirt->blockID || expectedId == Block::grass->blockID) &&
 		 (newId == Block::sand->blockID || newId == Block::gravel->blockID));
 	const bool directReplacement = callbackFreeReplacement || fallingBlockReplacement;
+    if (!(lightEquivalent && simpleBlocks && directReplacement))
+        return 0;
+    return fallingBlockReplacement ? 2 : 1;
+}
 
-    if (populationFastPathActive && lightEquivalent && simpleBlocks && directReplacement)
+bool World::replaceBlockForPopulation(int_t x, int_t y, int_t z,
+	                                  int_t expectedId, int_t newId, int_t mode)
+{
+    if (mode < 0 || y < 0 || y >= WorldHeight::HEIGHT)
+        return false;
+
+    if (chunkLocalDecoration.isActive())
+    {
+        if (chunkLocalDecoration.getBlockId(x, y, z) != expectedId)
+            return false;
+        return chunkLocalDecoration.setBlock(x, y, z, newId, 0);
+    }
+
+    if (populationFastPathActive && mode > 0)
     {
         const int_t cx = JavaArithmetic::intShr(x, 4);
         const int_t cz = JavaArithmetic::intShr(z, 4);
@@ -1642,7 +1690,7 @@ bool World::replaceBlockForPopulation(int_t x, int_t y, int_t z,
             {
                 const bool changed = chunk->replaceBlockIDForPopulation(
                     x & 0xf, y, z & 0xf, expectedId, newId);
-                if (changed && fallingBlockReplacement && Block::blocksList[newId] != nullptr)
+                if (changed && mode == 2 && Block::blocksList[newId] != nullptr)
                     Block::blocksList[newId]->onBlockAdded(this, x, y, z);
                 return changed;
             }

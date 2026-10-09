@@ -13,6 +13,10 @@ class WorldGenerator;
 class BiomeDecorator
 {
 public:
+    // The four slowest decoration stages since the last call, as " Name ms"
+    // pairs (ms per decorated chunk), for the log.
+    static void takeSlowestStages(char *out, int size, double perChunkNs);
+
     explicit BiomeDecorator(BiomeGenBase *biome);
     virtual ~BiomeDecorator();
 

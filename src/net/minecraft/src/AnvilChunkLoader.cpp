@@ -9,6 +9,7 @@
 #include <utility>
 
 #include "platform/Log.h"
+#include "platform/Profiler.h"
 #include "platform/chunks/ChunkMemoryPolicy.h"
 #include "Block.h"
 #include "AnvilChunkLoaderPending.h"
@@ -201,6 +202,71 @@ bool AnvilChunkLoader::isChunkSaved(int_t x, int_t z)
     return region != nullptr && region->hasChunk(x & 31, z & 31);
 }
 
+bool AnvilChunkLoader::readChunkRoot(int_t x, int_t z, std::unique_ptr<NBTTagCompound> &root,
+                                     ChunkLoadStatus *status)
+{
+    if (status != nullptr)
+        *status = ChunkLoadStatus::Missing;
+    root.reset();
+    try
+    {
+        // Local buffer, not readScratch: this runs on the streaming worker
+        // while the game thread may be inside loadChunk().
+        std::vector<byte_t> bytes;
+        if (!copyPendingChunkData(ChunkCoordIntPair(x, z), bytes))
+        {
+            if (storageDisabled)
+                return false;
+            // Safe against the writer: a coordinate leaves the pending set only
+            // after its region write returned, so a miss above means the data
+            // is (or was never saved and is) in the region file.
+            // Two attempts: RegionFileCache::clearCache() (full save) closes
+            // regions a reader may still hold; re-acquiring opens a fresh one.
+            RegionFile::ReadStatus readStatus = RegionFile::ReadStatus::Missing;
+            bool read = false;
+            for (int attempt = 0; attempt < 2 && !read; ++attempt)
+            {
+                std::shared_ptr<RegionFile> region = RegionFileCache::acquireRegionFile(
+                    worldDir, x, z, RegionFileCache::Format::Anvil, readOnly);
+                readStatus = RegionFile::ReadStatus::Missing;
+                read = region != nullptr && region->getChunkData(x & 31, z & 31, bytes, &readStatus);
+                if (!read && readStatus == RegionFile::ReadStatus::Missing)
+                    break;
+            }
+            if (!read)
+            {
+                if (status != nullptr && readStatus != RegionFile::ReadStatus::Missing)
+                    *status = ChunkLoadStatus::ReadError;
+                return false;
+            }
+        }
+
+        VectorInputStream stream(bytes);
+        root.reset(CompressedStreamTools::readCompound(stream));
+        if (root == nullptr)
+        {
+            if (status != nullptr)
+                *status = ChunkLoadStatus::ReadError;
+            return false;
+        }
+        if (status != nullptr)
+            *status = ChunkLoadStatus::Loaded;
+        return true;
+    }
+    catch (const std::exception &e)
+    {
+        MC_LOG_ERROR("chunk", "Invalid Anvil chunk %d,%d: %s\n", x, z, e.what());
+    }
+    catch (...)
+    {
+        MC_LOG_ERROR("chunk", "Invalid Anvil chunk %d,%d\n", x, z);
+    }
+    root.reset();
+    if (status != nullptr)
+        *status = ChunkLoadStatus::ReadError;
+    return false;
+}
+
 Chunk *AnvilChunkLoader::loadChunkFromCompound(World *world, int_t expectedX, int_t expectedZ,
                                                 NBTTagCompound *root, ChunkLoadStatus *status)
 {
@@ -260,6 +326,7 @@ void AnvilChunkLoader::saveChunk(World *world, Chunk *chunk)
 
     try
     {
+        PlatformTickPhaseScope serializePhase("chunkSer");
         std::unique_ptr<NBTTagCompound> root(new NBTTagCompound());
         NBTTagCompound *level = new NBTTagCompound();
         root->setTag("Level", level);
@@ -576,6 +643,7 @@ bool AnvilChunkLoader::copyPendingChunkData(const ChunkCoordIntPair &position, s
     if (pendingCoordinates.find(position) == pendingCoordinates.end())
         return false;
 
+    // Queued entries are newer than the in-flight one for the same coordinate.
     for (AnvilChunkLoaderPending *pending : pendingSaves)
     {
         if (pending != nullptr && pending->chunkPosition == position && !pending->serializedData.empty())
@@ -583,6 +651,15 @@ bool AnvilChunkLoader::copyPendingChunkData(const ChunkCoordIntPair &position, s
             out = pending->serializedData;
             return true;
         }
+    }
+    // The entry the writer is working on stays readable until its region write
+    // has returned. inFlight->serializedData is never modified (queueChunkToSave
+    // only merges into pendingSaves entries), so the writer reading it without
+    // the lock and this copy are both read-only.
+    if (inFlight != nullptr && inFlight->chunkPosition == position && !inFlight->serializedData.empty())
+    {
+        out = inFlight->serializedData;
+        return true;
     }
     return false;
 }
@@ -644,8 +721,11 @@ bool AnvilChunkLoader::writeNextIO()
             return false;
         pending = pendingSaves.front();
         pendingSaves.erase(pendingSaves.begin());
-        if (pending != nullptr)
-            pendingCoordinates.erase(pending->chunkPosition);
+        // Keep the coordinate in pendingCoordinates and the data reachable via
+        // inFlight while the region write runs outside the lock: readers on
+        // other threads must never see a window where it is in neither the
+        // queue nor the region file.
+        inFlight = pending;
     }
 
     std::unique_ptr<AnvilChunkLoaderPending> ownedPending(pending);
@@ -663,6 +743,27 @@ bool AnvilChunkLoader::writeNextIO()
         else
         {
             MC_LOG_ERROR("chunk", "Failed to save queued Anvil chunk: %s\n", e.what());
+        }
+    }
+    catch (...)
+    {
+        MC_LOG_ERROR("chunk", "Failed to save queued Anvil chunk\n");
+    }
+
+    {
+        std::lock_guard<std::mutex> guard(pendingMutex);
+        inFlight = nullptr;
+        if (pending != nullptr)
+        {
+            // Only forget the coordinate when no newer save was queued for it
+            // meanwhile; that one is still the authoritative copy.
+            const bool newerQueued = std::any_of(pendingSaves.begin(), pendingSaves.end(),
+                [pending](const AnvilChunkLoaderPending *other)
+                {
+                    return other != nullptr && other->chunkPosition == pending->chunkPosition;
+                });
+            if (!newerQueued)
+                pendingCoordinates.erase(pending->chunkPosition);
         }
     }
     return true;

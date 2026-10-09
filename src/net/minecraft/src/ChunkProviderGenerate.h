@@ -31,6 +31,16 @@ class WorldChunkManager;
 class ChunkProviderGenerate : public IChunkProvider
 {
 public:
+	enum GenPhase { GenPhaseBiomeLayers, GenPhaseNoise, GenPhaseFill, GenPhaseSurface, GenPhaseCaves, GenPhaseRavines, GenPhaseBlockBiomes, GenPhaseCount };
+	// Worker time per phase since the last call (all generators together).
+	static void takeGenPhaseStats(long long out[GenPhaseCount]);
+	// Game-thread decoration time for one PlatformPopulatePhase since the last call.
+	static long long takePopulatePhaseNs(int phase);
+	// Ends a half-run deferred populate without finishing it (its column is gone).
+#if PLATFORM_INCREMENTAL_POPULATE
+	void abandonPopulateTask() override { if (populateTask.active) finishPopulateTask(); }
+#endif
+
 	ChunkProviderGenerate(World *world, long_t l, bool mapFeaturesEnabled = true,
 	                      bool isolatedBiomeSource = false);
 	~ChunkProviderGenerate() override;
@@ -162,6 +172,8 @@ private:
 #endif
 
 	TerrainNoiseBuffer field_4185_d;
+	std::vector<unsigned char> lowNoiseMask;
+	std::vector<unsigned char> highNoiseMask;
 	TerrainNoiseBuffer field_4184_e;
 	TerrainNoiseBuffer field_4183_f;
 	TerrainNoiseBuffer field_4182_g;

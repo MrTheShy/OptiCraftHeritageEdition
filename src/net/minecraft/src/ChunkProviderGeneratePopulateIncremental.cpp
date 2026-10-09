@@ -23,12 +23,22 @@
 
 namespace
 {
+    // Game-thread time per decoration stage, read by ChunkProvider's log line.
+    long long g_populatePhaseNs[16];
+
     class InstantSandGuard
     {
     public:
         InstantSandGuard() { BlockSand::fallInstantly = true; }
         ~InstantSandGuard() { BlockSand::fallInstantly = false; }
     };
+}
+
+long long ChunkProviderGenerate::takePopulatePhaseNs(int phase)
+{
+    const long long ns = g_populatePhaseNs[phase & 15];
+    g_populatePhaseNs[phase & 15] = 0;
+    return ns;
 }
 
 void ChunkProviderGenerate::beginPopulateTask(int_t i, int_t j)
@@ -40,7 +50,10 @@ void ChunkProviderGenerate::beginPopulateTask(int_t i, int_t j)
     task.chunkZ = j;
     task.blockX = JavaArithmetic::intMul(i, 16);
     task.blockZ = JavaArithmetic::intMul(j, 16);
-    task.biome = worldObj->getWorldChunkManager()->getBiomeGenAt(JavaArithmetic::intAdd(task.blockX, 16), JavaArithmetic::intAdd(task.blockZ, 16));
+    // Java 1.2.5 reads the (+16,+16) column's stored biome, which is the loaded
+    // diagonal neighbour; the manager lookup gave the same biome but missed the
+    // game thread's biome cache for every new column (a full layer-chain run).
+    task.biome = worldObj->getBiomeGenForCoords(JavaArithmetic::intAdd(task.blockX, 16), JavaArithmetic::intAdd(task.blockZ, 16));
 
     task.random.setSeed(worldObj->getRandomSeed());
     const long_t xMultiplier = (task.random.nextLong() / 2LL) * 2LL + 1LL;
@@ -239,6 +252,7 @@ bool ChunkProviderGenerate::advancePopulateTask()
             break;
 
         case PopulateStage::Spawning:
+            profilePhase = PlatformPopulatePhase::Total;
 #if PLATFORM_POPULATE_WORLDGEN_ANIMALS
             if (task.biome != nullptr)
             {
@@ -302,6 +316,7 @@ bool ChunkProviderGenerate::advancePopulateTask()
 
         const long long elapsedNs = System::nanoTime() - startNs;
         task.totalNs += elapsedNs;
+        g_populatePhaseNs[static_cast<int>(profilePhase) & 15] += elapsedNs;
 #if defined(PS2_RENDER_STATS) || (defined(WII_PLATFORM) && MC_LOG_LEVEL >= 2)
         platformProfilePopulatePhase(profilePhase, elapsedNs);
 #endif
