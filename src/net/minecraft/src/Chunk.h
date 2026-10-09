@@ -149,6 +149,8 @@ public:
 
 	bool field_50120_o;
 	bool isChunkLoaded;
+	// Multiplayer: terrain arrived (Packet51). A pre-chunk alone is all air.
+	bool hasNetworkData = false;
 	World *worldObj;
 	int_t precipitationHeightMap[256];
 	bool updateSkylightColumns[256];

@@ -2,6 +2,7 @@
 
 #include "AxisAlignedBB.h"
 #include "client/Minecraft.h"
+#include "Chunk.h"
 #include "Container.h"
 #include "DamageSource.h"
 #include "EntityItem.h"
@@ -62,7 +63,13 @@ void EntityClientPlayerMP::heal(int_t)
 
 void EntityClientPlayerMP::onUpdate()
 {
-	if (worldObj->blockExists(MathHelper::floor_double(posX), 0, MathHelper::floor_double(posZ)))
+	// Java's guard: the client provider reports every column as existing, so
+	// the player fell through the air until the terrain under them arrived
+	// (packet dispatch is capped per tick). Wait for the real data instead.
+	const int_t x = MathHelper::floor_double(posX);
+	const int_t z = MathHelper::floor_double(posZ);
+	Chunk *chunk = worldObj->blockExists(x, 0, z) ? worldObj->getChunkFromBlockCoords(x, z) : nullptr;
+	if (chunk != nullptr && !chunk->isEmptyChunk() && chunk->hasNetworkData)
 		EntityPlayerSP::onUpdate();
 
 	sendMotionUpdates();

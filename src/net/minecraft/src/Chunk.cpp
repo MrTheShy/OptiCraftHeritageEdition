@@ -1723,6 +1723,7 @@ bool Chunk::func_48494_a(const byte_t *bytes, std::size_t length,
 	}
 	if (bytesConsumed != nullptr)
 		*bytesConsumed = offset;
+	hasNetworkData = true;
 	return true;
 }
 
