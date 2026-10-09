@@ -3624,6 +3624,9 @@ void RenderGlobal::updateAllRenderers()
 	{
 		if (worldRenderers[i]->isChunkLit && !worldRenderers[i]->needsUpdate)
 		{
+#if PLATFORM_PROFILE_RENDER_PHASES
+			platformProfileTickPhase("#skyMark", 1);
+#endif
 			enqueueRendererUpdate(worldRenderers[i]);
 			worldRenderers[i]->markDirty();
 		}

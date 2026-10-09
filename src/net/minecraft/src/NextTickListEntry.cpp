@@ -4,6 +4,32 @@
 
 long_t NextTickListEntry::nextTickEntryID = 0LL;
 
+#ifdef VITA_PLATFORM
+// Decoration schedules (and the next ticks retire) thousands of these per
+// chunk, all on the game thread: recycle them through a free list instead of
+// a locked newlib malloc/free each.
+// The list keeps its peak size (~40 B per pending tick) and is never returned
+// to the heap.
+static void *s_freeEntries = nullptr;
+
+void *NextTickListEntry::operator new(std::size_t size)
+{
+	void *pointer = s_freeEntries;
+	if (pointer == nullptr)
+		return ::operator new(size);
+	s_freeEntries = *static_cast<void **>(pointer);
+	return pointer;
+}
+
+void NextTickListEntry::operator delete(void *pointer) noexcept
+{
+	if (pointer == nullptr)
+		return;
+	*static_cast<void **>(pointer) = s_freeEntries;
+	s_freeEntries = pointer;
+}
+#endif
+
 NextTickListEntry::NextTickListEntry(int_t i, int_t j, int_t k, int_t l)
 {
 	tickEntryID = nextTickEntryID;
@@ -35,17 +61,6 @@ NextTickListEntry *NextTickListEntry::setScheduledTime(long_t l)
 {
 	scheduledTime = l;
 	return this;
-}
-
-int_t NextTickListEntry::comparer(const NextTickListEntry *nextticklistentry) const
-{
-	if (scheduledTime < nextticklistentry->scheduledTime)
-		return -1;
-	if (scheduledTime > nextticklistentry->scheduledTime)
-		return 1;
-	if (tickEntryID < nextticklistentry->tickEntryID)
-		return -1;
-	return tickEntryID <= nextticklistentry->tickEntryID ? 0 : 1;
 }
 
 int_t NextTickListEntry::compareTo(const NextTickListEntry *obj) const

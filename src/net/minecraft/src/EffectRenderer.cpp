@@ -35,12 +35,12 @@ void EffectRenderer::addEffect(EntityFX *entityfx)
 	if (entityfx == nullptr)
 		return;
     int_t i = entityfx->getFXLayer();
-    if ((int_t)fxLayers[i].size() >= PLATFORM_MAX_PARTICLES_PER_LAYER)
+    if (!updatingEffects && (int_t)fxLayers[i].size() >= PLATFORM_MAX_PARTICLES_PER_LAYER)
     {
 #ifdef PS2_OPTIMIZATION_VALIDATION
         Ps2OptimizationValidation::particleLayerCapEviction();
 #endif
-        fxLayers[i].erase(fxLayers[i].begin());
+        fxLayers[i].pop_front();
     }
 	fxLayers[i].emplace_back(entityfx);
 }
@@ -58,28 +58,38 @@ void EffectRenderer::updateEffects()
     for (int i = 0; i < 4; i++)
         fxLayers[i].clear();
     return;
-#endif
+    }
+    // One stable compaction pass per layer: the dead are dropped and the rest
+    // keep their order, without shifting the layer once per dead particle
+    // (boat splashes and block breaks kill dozens a tick). Particles spawned
+    // by an onUpdate land at the end and are updated in the same pass, as before.
+    updatingEffects = true;
+    int_t live = 0;
     for (int i = 0; i < 4; i++)
     {
-        for (int j = 0; j < (int)fxLayers[i].size(); j++)
+        std::deque<std::unique_ptr<EntityFX>> &layer = fxLayers[i];
+        std::size_t kept = 0;
+        for (std::size_t j = 0; j < layer.size(); j++)
         {
-			EntityFX *entityfx = fxLayers[i][j].get();
+            EntityFX *entityfx = layer[j].get();
             entityfx->onUpdate();
             if (entityfx->isDead)
-            {
-#if PLATFORM_FAST_PARTICLE_PHYSICS
-                // Order within a layer is not observable, so a dead particle
-                // is swapped with the last one instead of shifting the vector.
-                if (j != (int)fxLayers[i].size() - 1)
-                    std::swap(fxLayers[i][j], fxLayers[i].back());
-                fxLayers[i].pop_back();
-#else
-                fxLayers[i].erase(fxLayers[i].begin() + j);
-#endif
-                j--;
-            }
+                continue;
+            if (kept != j)
+                layer[kept] = std::move(layer[j]);
+            kept++;
         }
+        layer.erase(layer.begin() + (std::ptrdiff_t)kept, layer.end());
+        while ((int_t)layer.size() > PLATFORM_MAX_PARTICLES_PER_LAYER)
+            layer.pop_front();
+        live += (int_t)layer.size();
     }
+    updatingEffects = false;
+#if PLATFORM_PROFILE_RENDER_PHASES
+    platformProfileTickPhase("#fx", live);
+#else
+    (void)live;
+#endif
 }
 
 void EffectRenderer::renderParticles(Entity *entity, float_t f)

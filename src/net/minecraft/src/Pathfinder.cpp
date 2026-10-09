@@ -1,6 +1,7 @@
 #include "PathFinder.h"
 
 #include "platform/PlatformTuning.h"
+#include "platform/PlatformPerfOptions.h"
 
 #include "AxisAlignedBB.h"
 #include "Block.h"
@@ -29,6 +30,8 @@ Pathfinder::Pathfinder(IBlockAccess *iblockaccess, bool woodenDoorAllowed, bool 
 	  isPathingInWater(pathingInWater),
 	  canEntityDrown(entityCanDrown)
 {
+	// Searches World does not budget (SpawnerAnimals' wake-up path) keep the platform cap.
+	maxNodes = PLATFORM_PATHFIND_MAX_NODES;
 	path = new Path();
 #if PLATFORM_BOUNDED_PATHFIND
 	const int_t expectedPointCount = PLATFORM_PATHFIND_MAX_NODES * 4 + 2;
@@ -115,12 +118,12 @@ PathEntity *Pathfinder::addToPath(Entity *entity, PathPoint *pathpoint, PathPoin
 	// Bound A* cost on low-CPU profiles. Vanilla expands the open set until it is
 	// empty, which can scan thousands of nodes when the target is unreachable.
 	// After the cap, bail and return the best-so-far path (pathpoint3 below).
-	int_t nodesExpanded = 0;
+	nodesExpandedLast = 0;
 #endif
 	while (!path->isPathEmpty())
 	{
 #if PLATFORM_BOUNDED_PATHFIND
-		if (++nodesExpanded > PLATFORM_PATHFIND_MAX_NODES)
+		if (++nodesExpandedLast > maxNodes)
 			break;
 #endif
 		PathPoint *pathpoint4 = path->dequeue();

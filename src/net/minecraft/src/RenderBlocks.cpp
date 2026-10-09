@@ -850,8 +850,6 @@ bool RenderBlocks::renderBlockBed(Block *block, int_t i, int_t j, int_t k)
 	float f13 = f;
 	float f14 = f2;
 	float f15 = f3;
-	float f16 = block->getBlockBrightness(blockAccess, i, j, k);
-	(void)f16;
 	const int_t packedBrightness = block->getMixedBrightnessForBlock(blockAccess, i, j, k);
 	tessellator->setBrightness(packedBrightness);
 	tessellator->setColorOpaque_F(f7, f10, f13);
@@ -871,8 +869,6 @@ bool RenderBlocks::renderBlockBed(Block *block, int_t i, int_t j, int_t k)
 	tessellator->addVertexWithUV(d8, d12, d14, d, d4);
 	tessellator->addVertexWithUV(d10, d12, d14, d2, d4);
 	tessellator->addVertexWithUV(d10, d12, d16, d2, d6);
-	float f17 = block->getBlockBrightness(blockAccess, i, j + 1, k);
-	(void)f17;
 	tessellator->setBrightness(block->getMixedBrightnessForBlock(blockAccess, i, j + 1, k));
 	tessellator->setColorOpaque_F(f4, f5, f6);
 	j1 = block->getBlockTexture(blockAccess, i, j, k, 1);
@@ -944,8 +940,6 @@ bool RenderBlocks::renderBlockBed(Block *block, int_t i, int_t j, int_t k)
 	}
 	if (f17a != 2 && (renderAllFaces || shouldRenderFace(block, i, j, k - 1, 2)))
 	{
-		float f18 = block->getBlockBrightness(blockAccess, i, j, k - 1);
-		(void)f18;
 		tessellator->setBrightness(block->minZ > 0.0 ? packedBrightness : block->getMixedBrightnessForBlock(blockAccess, i, j, k - 1));
 		tessellator->setColorOpaque_F(f8, f11, f14);
 		flipTexture = j1 == 2;
@@ -953,8 +947,6 @@ bool RenderBlocks::renderBlockBed(Block *block, int_t i, int_t j, int_t k)
 	}
 	if (f17a != 3 && (renderAllFaces || shouldRenderFace(block, i, j, k + 1, 3)))
 	{
-		float f19 = block->getBlockBrightness(blockAccess, i, j, k + 1);
-		(void)f19;
 		tessellator->setBrightness(block->maxZ < 1.0 ? packedBrightness : block->getMixedBrightnessForBlock(blockAccess, i, j, k + 1));
 		tessellator->setColorOpaque_F(f8, f11, f14);
 		flipTexture = j1 == 3;
@@ -962,8 +954,6 @@ bool RenderBlocks::renderBlockBed(Block *block, int_t i, int_t j, int_t k)
 	}
 	if (f17a != 4 && (renderAllFaces || shouldRenderFace(block, i - 1, j, k, 4)))
 	{
-		float f20 = block->getBlockBrightness(blockAccess, i - 1, j, k);
-		(void)f20;
 		tessellator->setBrightness(block->minX > 0.0 ? packedBrightness : block->getMixedBrightnessForBlock(blockAccess, i - 1, j, k));
 		tessellator->setColorOpaque_F(f9, f12, f15);
 		flipTexture = j1 == 4;
@@ -971,8 +961,6 @@ bool RenderBlocks::renderBlockBed(Block *block, int_t i, int_t j, int_t k)
 	}
 	if (f17a != 5 && (renderAllFaces || shouldRenderFace(block, i + 1, j, k, 5)))
 	{
-		float f21 = block->getBlockBrightness(blockAccess, i + 1, j, k);
-		(void)f21;
 		tessellator->setBrightness(block->maxX < 1.0 ? packedBrightness : block->getMixedBrightnessForBlock(blockAccess, i + 1, j, k));
 		tessellator->setColorOpaque_F(f9, f12, f15);
 		flipTexture = j1 == 5;
@@ -1305,6 +1293,10 @@ bool RenderBlocks::renderPistonExtension(Block *block, int_t i, int_t j, int_t k
 {
 	int_t l = accessGetBlockMetadata(i, j, k);
 	int_t i1 = BlockPistonExtension::getPistonExtensionType(l); // orientation from metadata low 3 bits
+	// The arm's vertex colour is the one mesh value that depends on
+	// skylightSubtracted. Reading it sets Chunk::isLit, which is what makes
+	// RenderGlobal::updateAllRenderers rebuild this section at dawn and dusk;
+	// everything else uses the lightmap and needs no rebuild.
 	float f = block->getBlockBrightness(blockAccess, i, j, k);
 	float f1 = flag ? 1.0f : 0.5f;
 	float d = flag ? 16.0f : 8.0f;
@@ -3468,24 +3460,37 @@ bool RenderBlocks::renderStandardBlockWithColorMultiplier(Block *block, int_t i,
 		f17 *= f2;
 		f18 *= f2;
 	}
-	const int_t packedBrightness = block->getMixedBrightnessForBlock(blockAccess, i, j, k);
+	// The block's own brightness is only used by inset faces (minY > 0 etc.);
+	// a full cube (leaves, glass, stone) never reads it: two virtual calls
+	// per block saved.
+	int_t packedBrightness = 0;
+	bool packedBrightnessValid = false;
+	auto centreBrightness = [&]() -> int_t
+	{
+		if (!packedBrightnessValid)
+		{
+			packedBrightness = block->getMixedBrightnessForBlock(blockAccess, i, j, k);
+			packedBrightnessValid = true;
+		}
+		return packedBrightness;
+	};
 	if (renderAllFaces || shouldRenderFace(block, i, j - 1, k, 0))
 	{
-		tessellator->setBrightness(block->minY > 0.0 ? packedBrightness : block->getMixedBrightnessForBlock(blockAccess, i, j - 1, k));
+		tessellator->setBrightness(block->minY > 0.0 ? centreBrightness() : block->getMixedBrightnessForBlock(blockAccess, i, j - 1, k));
 		tessellator->setColorOpaque_F(f10, f13, f16);
 		renderBottomFace(block, i, j, k, block->getBlockTexture(blockAccess, i, j, k, 0));
 		flag = true;
 	}
 	if (renderAllFaces || shouldRenderFace(block, i, j + 1, k, 1))
 	{
-		tessellator->setBrightness(block->maxY < 1.0 ? packedBrightness : block->getMixedBrightnessForBlock(blockAccess, i, j + 1, k));
+		tessellator->setBrightness(block->maxY < 1.0 ? centreBrightness() : block->getMixedBrightnessForBlock(blockAccess, i, j + 1, k));
 		tessellator->setColorOpaque_F(f7, f8, f9);
 		renderTopFace(block, i, j, k, block->getBlockTexture(blockAccess, i, j, k, 1));
 		flag = true;
 	}
 	if (renderAllFaces || shouldRenderFace(block, i, j, k - 1, 2))
 	{
-		tessellator->setBrightness(block->minZ > 0.0 ? packedBrightness : block->getMixedBrightnessForBlock(blockAccess, i, j, k - 1));
+		tessellator->setBrightness(block->minZ > 0.0 ? centreBrightness() : block->getMixedBrightnessForBlock(blockAccess, i, j, k - 1));
 		tessellator->setColorOpaque_F(f11, f14, f17);
 		int_t l = block->getBlockTexture(blockAccess, i, j, k, 2);
 		if (overrideBlockTexture < 0 && Config::isBetterGrass())
@@ -3513,7 +3518,7 @@ bool RenderBlocks::renderStandardBlockWithColorMultiplier(Block *block, int_t i,
 	}
 	if (renderAllFaces || shouldRenderFace(block, i, j, k + 1, 3))
 	{
-		tessellator->setBrightness(block->maxZ < 1.0 ? packedBrightness : block->getMixedBrightnessForBlock(blockAccess, i, j, k + 1));
+		tessellator->setBrightness(block->maxZ < 1.0 ? centreBrightness() : block->getMixedBrightnessForBlock(blockAccess, i, j, k + 1));
 		tessellator->setColorOpaque_F(f11, f14, f17);
 		int_t i1 = block->getBlockTexture(blockAccess, i, j, k, 3);
 		if (overrideBlockTexture < 0 && Config::isBetterGrass())
@@ -3541,7 +3546,7 @@ bool RenderBlocks::renderStandardBlockWithColorMultiplier(Block *block, int_t i,
 	}
 	if (renderAllFaces || shouldRenderFace(block, i - 1, j, k, 4))
 	{
-		tessellator->setBrightness(block->minX > 0.0 ? packedBrightness : block->getMixedBrightnessForBlock(blockAccess, i - 1, j, k));
+		tessellator->setBrightness(block->minX > 0.0 ? centreBrightness() : block->getMixedBrightnessForBlock(blockAccess, i - 1, j, k));
 		tessellator->setColorOpaque_F(f12, f15, f18);
 		int_t j1 = block->getBlockTexture(blockAccess, i, j, k, 4);
 		if (overrideBlockTexture < 0 && Config::isBetterGrass())
@@ -3569,7 +3574,7 @@ bool RenderBlocks::renderStandardBlockWithColorMultiplier(Block *block, int_t i,
 	}
 	if (renderAllFaces || shouldRenderFace(block, i + 1, j, k, 5))
 	{
-		tessellator->setBrightness(block->maxX < 1.0 ? packedBrightness : block->getMixedBrightnessForBlock(blockAccess, i + 1, j, k));
+		tessellator->setBrightness(block->maxX < 1.0 ? centreBrightness() : block->getMixedBrightnessForBlock(blockAccess, i + 1, j, k));
 		tessellator->setColorOpaque_F(f12, f15, f18);
 		int_t k1 = block->getBlockTexture(blockAccess, i, j, k, 5);
 		if (overrideBlockTexture < 0 && Config::isBetterGrass())
@@ -3803,23 +3808,15 @@ bool RenderBlocks::renderBlockDoor(Block *block, int_t i, int_t j, int_t k)
 	float f1 = 1.0f;
 	float f2 = 0.8f;
 	float f3 = 0.6f;
-	float f4 = block->getBlockBrightness(blockAccess, i, j, k);
-	(void)f4;
-	float f5 = block->getBlockBrightness(blockAccess, i, j - 1, k);
 	const int_t packedBrightness = block->getMixedBrightnessForBlock(blockAccess, i, j, k);
-	(void)f5;
 	tessellator->setBrightness(block->minY > 0.0 ? packedBrightness : block->getMixedBrightnessForBlock(blockAccess, i, j - 1, k));
 	tessellator->setColorOpaque_F(f, f, f);
 	renderBottomFace(block, i, j, k, block->getBlockTexture(blockAccess, i, j, k, 0));
 	flag = true;
-	f5 = block->getBlockBrightness(blockAccess, i, j + 1, k);
-	(void)f5;
 	tessellator->setBrightness(block->maxY < 1.0 ? packedBrightness : block->getMixedBrightnessForBlock(blockAccess, i, j + 1, k));
 	tessellator->setColorOpaque_F(f1, f1, f1);
 	renderTopFace(block, i, j, k, block->getBlockTexture(blockAccess, i, j, k, 1));
 	flag = true;
-	f5 = block->getBlockBrightness(blockAccess, i, j, k - 1);
-	(void)f5;
 	tessellator->setBrightness(block->minZ > 0.0 ? packedBrightness : block->getMixedBrightnessForBlock(blockAccess, i, j, k - 1));
 	tessellator->setColorOpaque_F(f2, f2, f2);
 	int_t l = block->getBlockTexture(blockAccess, i, j, k, 2);
@@ -3831,8 +3828,6 @@ bool RenderBlocks::renderBlockDoor(Block *block, int_t i, int_t j, int_t k)
 	renderEastFace(block, i, j, k, l);
 	flag = true;
 	flipTexture = false;
-	f5 = block->getBlockBrightness(blockAccess, i, j, k + 1);
-	(void)f5;
 	tessellator->setBrightness(block->maxZ < 1.0 ? packedBrightness : block->getMixedBrightnessForBlock(blockAccess, i, j, k + 1));
 	tessellator->setColorOpaque_F(f2, f2, f2);
 	l = block->getBlockTexture(blockAccess, i, j, k, 3);
@@ -3844,8 +3839,6 @@ bool RenderBlocks::renderBlockDoor(Block *block, int_t i, int_t j, int_t k)
 	renderWestFace(block, i, j, k, l);
 	flag = true;
 	flipTexture = false;
-	f5 = block->getBlockBrightness(blockAccess, i - 1, j, k);
-	(void)f5;
 	tessellator->setBrightness(block->minX > 0.0 ? packedBrightness : block->getMixedBrightnessForBlock(blockAccess, i - 1, j, k));
 	tessellator->setColorOpaque_F(f3, f3, f3);
 	l = block->getBlockTexture(blockAccess, i, j, k, 4);
@@ -3857,8 +3850,6 @@ bool RenderBlocks::renderBlockDoor(Block *block, int_t i, int_t j, int_t k)
 	renderNorthFace(block, i, j, k, l);
 	flag = true;
 	flipTexture = false;
-	f5 = block->getBlockBrightness(blockAccess, i + 1, j, k);
-	(void)f5;
 	tessellator->setBrightness(block->maxX < 1.0 ? packedBrightness : block->getMixedBrightnessForBlock(blockAccess, i + 1, j, k));
 	tessellator->setColorOpaque_F(f3, f3, f3);
 	l = block->getBlockTexture(blockAccess, i, j, k, 5);

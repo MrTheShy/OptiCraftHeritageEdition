@@ -1026,9 +1026,17 @@ bool renderCaptureInterleaved(const RenderInterleavedMesh& mesh, RenderCapturedM
     }
     const unsigned char* src = static_cast<const unsigned char*>(mesh.data) + (size_t)mesh.first * mesh.stride;
     const size_t bytes = (size_t)mesh.count * mesh.stride;
-    const size_t old = out.raw.size();
-    out.raw.resize(old + (bytes + 3u) / 4u);
-    std::memcpy(reinterpret_cast<unsigned char*>(out.raw.data()) + old * 4u, src, bytes);
+    // insert, not resize + memcpy: resize zero-fills the new ints first (a
+    // whole extra write pass over every captured byte).
+    const std::int32_t* srcInts = reinterpret_cast<const std::int32_t*>(src);
+    const size_t wholeInts = bytes / 4u;
+    out.raw.insert(out.raw.end(), srcInts, srcInts + wholeInts);
+    if (bytes & 3u)
+    {
+        std::int32_t tail = 0;
+        std::memcpy(&tail, src + wholeInts * 4u, bytes & 3u);
+        out.raw.push_back(tail);
+    }
     out.vertexCount += mesh.count;
     return true;
 }

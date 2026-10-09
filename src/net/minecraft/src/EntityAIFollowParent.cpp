@@ -17,7 +17,10 @@ EntityAnimal *EntityAIFollowParent::resolveParent() const
 {
 	if (childAnimal == nullptr || childAnimal->worldObj == nullptr || parentEntityId < 0)
 		return nullptr;
-	return dynamic_cast<EntityAnimal *>(childAnimal->worldObj->getEntityByID(parentEntityId));
+	// Runs every tick while the task is active: isAnimal() is the same class
+	// test as dynamic_cast without the library walk.
+	Entity *entity = childAnimal->worldObj->getEntityByID(parentEntityId);
+	return entity != nullptr && entity->isAnimal() ? static_cast<EntityAnimal *>(entity) : nullptr;
 }
 
 bool EntityAIFollowParent::shouldExecute()

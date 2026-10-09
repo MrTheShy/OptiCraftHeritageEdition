@@ -20,7 +20,7 @@ void EntityLookHelper::setLookPositionWithEntity(Entity *target, float newYawSpe
 	if (target == nullptr)
 		return;
 	posX = static_cast<look_math_t>(target->posX);
-	EntityLiving *living = dynamic_cast<EntityLiving *>(target);
+	EntityLiving *living = EntityLiving::asLiving(target); // no __dynamic_cast walk
 	if (living != nullptr)
 		posY = static_cast<look_math_t>(target->posY) + static_cast<look_math_t>(living->getEyeHeight());
 	else

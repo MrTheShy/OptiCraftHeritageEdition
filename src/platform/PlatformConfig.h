@@ -145,6 +145,13 @@
 
 #ifndef PLATFORM_PROFILE_RENDER_PHASES
 #  define PLATFORM_PROFILE_RENDER_PHASES (PLATFORM_PS2 || PLATFORM_WII)
+// Test builds only: also run the slow path behind the entity/chunk lookup
+// shortcuts (ChunkProvider residentSlots, Entity::chunkListRefs, validated
+// entity sections) and log "shortcut mismatch" if the answers differ.
+#ifndef PLATFORM_VERIFY_ENTITY_SHORTCUTS
+#  define PLATFORM_VERIFY_ENTITY_SHORTCUTS 0
+#endif
+
 #endif
 
 #ifndef PLATFORM_NATIVE_TERRAIN_PIPELINE

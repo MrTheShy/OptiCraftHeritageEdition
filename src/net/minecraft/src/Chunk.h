@@ -171,6 +171,12 @@ public:
 #if PLATFORM_ENTITY_QUERY_CACHE
 	std::uint32_t entitySectionRevision[SECTION_COUNT];
 	PlatformEntityQueryCache<Entity> *entityQueryCaches[SECTION_COUNT];
+#if PLATFORM_PC_LEGACY
+	// Section revision and World::stableLoadedEntityPointerEpoch() at the last
+	// AABB query that checked every pointer of the section (epoch 0: never).
+	std::uint32_t entityValidatedRevision[SECTION_COUNT] = {};
+	std::uint32_t entityValidatedEpoch[SECTION_COUNT] = {};
+#endif
 #endif
 	bool isTerrainPopulated;
 	bool isModified;

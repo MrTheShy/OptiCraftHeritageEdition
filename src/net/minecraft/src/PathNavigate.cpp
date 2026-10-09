@@ -14,6 +14,7 @@
 #include "PathPoint.h"
 #include "Vec3D.h"
 #include "World.h"
+#include "platform/PlatformPerfOptions.h"
 
 PathNavigate::PathNavigate(EntityLiving *entity, World *world, float range)
 	: theEntity(entity), worldObj(world), currentPath(), speed(0.0f), pathSearchRange(range),
@@ -192,6 +193,8 @@ namespace
 bool shouldProbePathShortcut(const EntityLiving *entity, int_t totalTicks)
 {
 #if PLATFORM_PATH_SHORTCUT_TICK_DIVISOR > 1
+	if (!platformPerf().aiThrottle)
+		return true;
 	return entity != nullptr &&
 		((JavaArithmetic::intAdd(totalTicks, entity->entityId)) &
 		 (PLATFORM_PATH_SHORTCUT_TICK_DIVISOR - 1)) == 0;

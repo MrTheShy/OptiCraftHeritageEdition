@@ -31,6 +31,7 @@ protected:
 public:
 	AxisAlignedBB *getCollisionBox(Entity *entity) override;
 	AxisAlignedBB *getBoundingBox() override;
+	SolidEntityToken solidToken{this};
 	bool canBePushed() override { return true; }
 	double getMountedYOffset() override;
 	bool attackEntityFrom(Entity *entity, int_t i) override;

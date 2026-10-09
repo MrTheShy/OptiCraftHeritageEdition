@@ -1,5 +1,6 @@
 #pragma once
 
+#include <deque>
 #include <memory>
 #include <string>
 #include <vector>
@@ -34,7 +35,10 @@ protected:
     World *worldObj;
 
 private:
-    std::vector<std::unique_ptr<EntityFX>> fxLayers[4];
+    // deque: the cap drops the oldest (Java remove(0)) in O(1).
+    std::deque<std::unique_ptr<EntityFX>> fxLayers[4];
+    // updateEffects() walks the layers by index; evictions wait for it.
+    bool                     updatingEffects = false;
     RenderEngine            *renderer;
     Random                   rand;
 };

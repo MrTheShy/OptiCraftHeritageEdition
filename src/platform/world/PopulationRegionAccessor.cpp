@@ -79,7 +79,7 @@ Chunk *PopulationRegionAccessor::getChunk(int_t x, int_t y, int_t z) const
     return chunks[(relativeZ >> 4) * CHUNK_AXIS + (relativeX >> 4)];
 }
 
-bool PopulationRegionAccessor::tryGetBlockId(int_t x, int_t y, int_t z, int_t &blockId)
+bool PopulationRegionAccessor::tryGetBlockIdActive(int_t x, int_t y, int_t z, int_t &blockId)
 {
     int_t chunkIndex = 0;
     int_t sectionIndex = 0;

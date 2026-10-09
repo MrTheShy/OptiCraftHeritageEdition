@@ -25,6 +25,9 @@ public:
 		return chunkExists(i, j) ? provideChunk(i, j) : nullptr;
 	}
 	virtual Chunk *provideChunk(int_t i, int_t j) = 0;
+	// The column if it is resident or saved (loading it then), else nullptr:
+	// a column never saved holds only generated terrain.
+	virtual Chunk *getChunkIfSaved(int_t i, int_t j) { return provideChunk(i, j); }
 	virtual Chunk *prepareChunk(int_t i, int_t j) = 0;
 	virtual Chunk *loadChunk(int_t i, int_t j) { return prepareChunk(i, j); }
 	virtual void populate(IChunkProvider *ichunkprovider, int_t i, int_t j) = 0;

@@ -1,6 +1,12 @@
 #include "Teleporter.h"
 
+#include <algorithm>
+#include <cstring>
+
 #include "Block.h"
+#include "Chunk.h"
+#include "ExtendedBlockStorage.h"
+#include "IChunkProvider.h"
 #include "BlockPortal.h"
 #include "Entity.h"
 #include "Material.h"
@@ -58,25 +64,53 @@ bool Teleporter::placeInExistingPortal(World *world, Entity *entity)
 	int_t k = 0;
 	int_t l = MathHelper::floor_double(entity->posX);
 	int_t i1 = MathHelper::floor_double(entity->posZ);
-	for (int_t j1 = l - c; j1 <= l + c; j1++)
+	// Java walks all 257x257x128 blocks through World.getBlockId (8.4 M reads,
+	// each one a chunk request for a column not loaded yet: ~20 s on the Vita).
+	// Same candidates here, chunk by chunk, skipping every section with no
+	// portal byte; chunks on disk but not in memory are loaded as Java's
+	// getBlockId would, never-saved ones cannot hold a portal. Java keeps the
+	// first minimum in x, z, top-down order, so ties fall back to that order.
+	const int_t portalId = Block::portal->blockID;
+	IChunkProvider *provider = world->getIChunkProvider();
+	for (int_t cx = (l - c) >> 4; cx <= (l + c) >> 4; cx++)
 	{
-		double d1 = ((double)j1 + 0.5) - entity->posX;
-		for (int_t j2 = i1 - c; j2 <= i1 + c; j2++)
+		for (int_t cz = (i1 - c) >> 4; cz <= (i1 + c) >> 4; cz++)
 		{
-			double d3 = ((double)j2 + 0.5) - entity->posZ;
-			for (int_t k2 = 127; k2 >= 0; k2--)
+			Chunk *chunk = provider != nullptr ? provider->getChunkIfSaved(cx, cz) : nullptr;
+			if (chunk == nullptr)
+				continue;
+			int_t topSection = -1;
+			for (int_t s = 0; s < Chunk::SECTION_COUNT; s++)
 			{
-				if (world->getBlockId(j1, k2, j2) != Block::portal->blockID)
-					continue;
-				for (; world->getBlockId(j1, k2 - 1, j2) == Block::portal->blockID; k2--) {}
-				double d5 = ((double)k2 + 0.5) - entity->posY;
-				double d7 = d1 * d1 + d5 * d5 + d3 * d3;
-				if (d < 0.0 || d7 < d)
+				const ExtendedBlockStorage *section = chunk->getBlockStorage(s);
+				if (section != nullptr && std::memchr(section->func_48692_g().data(), portalId,
+						section->func_48692_g().size()) != nullptr)
+					topSection = s;
+			}
+			if (topSection < 0)
+				continue;
+			for (int_t j1 = std::max(l - c, cx << 4); j1 <= std::min(l + c, (cx << 4) + 15); j1++)
+			{
+				double d1 = ((double)j1 + 0.5) - entity->posX;
+				for (int_t j2 = std::max(i1 - c, cz << 4); j2 <= std::min(i1 + c, (cz << 4) + 15); j2++)
 				{
-					d = d7;
-					i = j1;
-					j = k2;
-					k = j2;
+					double d3 = ((double)j2 + 0.5) - entity->posZ;
+					for (int_t k2 = topSection * 16 + 15; k2 >= 0; k2--)
+					{
+						if (chunk->getBlockID(j1 & 15, k2, j2 & 15) != portalId)
+							continue;
+						for (; k2 > 0 && chunk->getBlockID(j1 & 15, k2 - 1, j2 & 15) == portalId; k2--) {}
+						double d5 = ((double)k2 + 0.5) - entity->posY;
+						double d7 = d1 * d1 + d5 * d5 + d3 * d3;
+						const bool earlier = j1 < i || (j1 == i && (j2 < k || (j2 == k && k2 > j)));
+						if (d < 0.0 || d7 < d || (d7 == d && earlier))
+						{
+							d = d7;
+							i = j1;
+							j = k2;
+							k = j2;
+						}
+					}
 				}
 			}
 		}

@@ -1025,6 +1025,9 @@ void Entity::updateFallState(double d, bool flag)
 	}
 }
 
+int_t Entity::solidEntityCount = 0;
+std::vector<Entity *> Entity::solidEntities;
+
 AxisAlignedBB *Entity::getBoundingBox()
 {
 	return nullptr;
@@ -1495,18 +1498,33 @@ bool Entity::isEntityAlive()
 
 bool Entity::isEntityInsideOpaqueBlock()
 {
+	// The 8 probe corners usually fall in 1-4 distinct cells. A cell already
+	// checked was not a normal cube (else we returned), so skip repeats: same
+	// answer, fewer world reads. Runs every tick for every living entity.
+	int_t checked[8][3];
+	int_t checkedCount = 0;
+	const double eyeY = posY + (double)getEyeHeight();
 	for (int_t i = 0; i < 8; i++)
 	{
 		float f  = ((float)((i >> 0) % 2) - 0.5f) * width * 0.8f;
 		float f1 = ((float)((i >> 1) % 2) - 0.5f) * 0.1f;
 		float f2 = ((float)((i >> 2) % 2) - 0.5f) * width * 0.8f;
 		int_t j = MathHelper::floor_double(posX + (double)f);
-		int_t k = MathHelper::floor_double(posY + (double)getEyeHeight() + (double)f1);
+		int_t k = MathHelper::floor_double(eyeY + (double)f1);
 		int_t l = MathHelper::floor_double(posZ + (double)f2);
+		bool seen = false;
+		for (int_t c = 0; c < checkedCount && !seen; c++)
+			seen = checked[c][0] == j && checked[c][1] == k && checked[c][2] == l;
+		if (seen)
+			continue;
 		if (worldObj->isBlockNormalCube(j, k, l))
 		{
 			return true;
 		}
+		checked[checkedCount][0] = j;
+		checked[checkedCount][1] = k;
+		checked[checkedCount][2] = l;
+		checkedCount++;
 	}
 	return false;
 }

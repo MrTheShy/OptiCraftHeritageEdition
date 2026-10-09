@@ -1123,6 +1123,7 @@ void Chunk::addEntity(Entity *entity)
 	entity->chunkCoordY = section;
 	entity->chunkCoordZ = zPosition;
 	entities[section].push_back(entity);
+	++entity->chunkListRefs;
 #if PLATFORM_ENTITY_QUERY_CACHE
 	++entitySectionRevision[section];
 #endif
@@ -1143,10 +1144,13 @@ void Chunk::removeEntityAtIndex(Entity *entity, int_t i)
 	auto &list = entities[i];
 	const std::size_t oldSize = list.size();
 	list.erase(std::remove(list.begin(), list.end(), entity), list.end());
-#if PLATFORM_ENTITY_QUERY_CACHE
 	if (list.size() != oldSize)
+	{
+		entity->chunkListRefs -= static_cast<int_t>(oldSize - list.size());
+#if PLATFORM_ENTITY_QUERY_CACHE
 		++entitySectionRevision[i];
 #endif
+	}
 }
 
 void Chunk::removeEntityFromAllSections(Entity *entity)
@@ -1159,10 +1163,13 @@ void Chunk::removeEntityFromAllSections(Entity *entity)
 		auto &list = entities[section];
 		const std::size_t oldSize = list.size();
 		list.erase(std::remove(list.begin(), list.end(), entity), list.end());
-#if PLATFORM_ENTITY_QUERY_CACHE
 		if (list.size() != oldSize)
+		{
+			entity->chunkListRefs -= static_cast<int_t>(oldSize - list.size());
+#if PLATFORM_ENTITY_QUERY_CACHE
 			++entitySectionRevision[section];
 #endif
+		}
 	}
 }
 
@@ -1376,14 +1383,31 @@ void Chunk::getEntitiesWithinAABBForEntity(Entity *entity, AxisAlignedBB *axisal
 	for (int_t section = minSection; section <= maxSection; ++section)
 	{
 		auto &sectionEntities = entities[section];
+#if PLATFORM_ENTITY_QUERY_CACHE && PLATFORM_PC_LEGACY
+		// The pointer check below is a hash-set find per candidate (software
+		// modulo on the A9), O(n^2) for a pile of falling gravel. If neither
+		// this section nor the World's pointer set lost anything since every
+		// pointer here last passed, each would pass again: skip the checks.
+		const std::uint32_t epochBefore = worldObj != nullptr ? worldObj->stableLoadedEntityPointerEpoch() : 0u;
+		const bool alreadyValidated = epochBefore != 0u &&
+			entityValidatedEpoch[section] == epochBefore &&
+			entityValidatedRevision[section] == entitySectionRevision[section];
+#else
+		const bool alreadyValidated = false;
+#endif
 		for (auto it = sectionEntities.begin(); it != sectionEntities.end();)
 		{
 			Entity *candidate = *it;
+#if PLATFORM_VERIFY_ENTITY_SHORTCUTS
+			if (alreadyValidated && (candidate == nullptr || !worldObj->isLoadedEntityPointer(candidate)))
+				MC_LOG_ERROR("chunk", "shortcut mismatch: validated section %d,%d/%d\n", xPosition, zPosition, section);
+#endif
 
 			// Chunk buckets are non-owning. If World no longer tracks this raw
 			// address, dereferencing it can be a use-after-free during collision
 			// queries. Purge the stale index entry before touching candidate.
-			if (candidate == nullptr || worldObj == nullptr || !worldObj->isLoadedEntityPointer(candidate))
+			if (!alreadyValidated &&
+			    (candidate == nullptr || worldObj == nullptr || !worldObj->isLoadedEntityPointer(candidate)))
 			{
 				if (candidate != nullptr)
 				{
@@ -1413,6 +1437,16 @@ void Chunk::getEntitiesWithinAABBForEntity(Entity *entity, AxisAlignedBB *axisal
 				}
 			}
 		}
+#if PLATFORM_ENTITY_QUERY_CACHE && PLATFORM_PC_LEGACY
+		// Purges above do not bump the revision; what is left all passed
+		// against one unchanged set (a rebuild mid-loop changes the epoch).
+		if (!alreadyValidated && worldObj != nullptr)
+		{
+			const std::uint32_t epochAfter = worldObj->stableLoadedEntityPointerEpoch();
+			entityValidatedEpoch[section] = epochAfter == epochBefore ? epochAfter : 0u;
+			entityValidatedRevision[section] = entitySectionRevision[section];
+		}
+#endif
 	}
 }
 

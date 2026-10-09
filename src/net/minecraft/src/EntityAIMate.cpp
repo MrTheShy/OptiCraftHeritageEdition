@@ -18,7 +18,10 @@ EntityAnimal *EntityAIMate::resolveMate() const
 {
 	if (theWorld == nullptr || targetMateEntityId < 0)
 		return nullptr;
-	return dynamic_cast<EntityAnimal *>(theWorld->getEntityByID(targetMateEntityId));
+	// Runs every tick while the task is active: isAnimal() is the same class
+	// test as dynamic_cast without the library walk.
+	Entity *entity = theWorld->getEntityByID(targetMateEntityId);
+	return entity != nullptr && entity->isAnimal() ? static_cast<EntityAnimal *>(entity) : nullptr;
 }
 
 int_t EntityAIMate::findMateEntityId() const

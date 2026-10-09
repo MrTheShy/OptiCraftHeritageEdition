@@ -28,6 +28,11 @@ public:
     PathEntity *createEntityPathTo(Entity *entity, int_t x, int_t y, int_t z, float maxDistance);
     PathEntity *createEntityPathTo(Entity *entity, double x, double y, double z, float maxDistance);
 
+    // Bounded builds only. World sets the node cap of the next search and reads
+    // back how many nodes it expanded to charge them to the tick's node budget.
+    int_t maxNodes = 0x7fffffff;
+    int_t nodesExpandedLast = 0;
+
 private:
     struct PointMapSlot
     {

@@ -62,6 +62,7 @@ public:
 
 	bool    chunkExists(int_t i, int_t j) override;
 	Chunk  *getChunkIfExists(int_t i, int_t j) override;
+	Chunk  *getChunkIfSaved(int_t i, int_t j) override;
 	Chunk  *prepareChunk(int_t i, int_t j) override;
 	Chunk  *provideChunk(int_t i, int_t j) override;
 	void    populate(IChunkProvider *ichunkprovider, int_t i, int_t j) override;
@@ -79,6 +80,8 @@ public:
 
 private:
 	static std::uint64_t chunkKey(int_t i, int_t j);
+	// chunkMap.find for the lookups below, through residentSlots.
+	bool findResidentChunk(int_t i, int_t j, Chunk *&chunk);
 
 	Chunk *loadChunkFromFile(int_t i, int_t j, bool &readFailed);
 	Chunk *prepareChunkInternal(int_t i, int_t j, bool deferGeneration);
@@ -157,4 +160,16 @@ private:
 	int_t                                 chunkLoadRadius;
 	int_t                                 chunkUnloadRadius;
 	std::uint32_t                         chunkTopologyVersion;
+	// Direct-mapped front for chunkMap. On 32-bit libstdc++ std::hash<uint64_t>
+	// keeps only the low word (chunkZ), so every column of one Z shares a
+	// bucket chain walked with a software modulo per node on the A9. A slot is
+	// valid while chunkTopologyVersion (bumped on every insert and erase) is
+	// unchanged. The map, its hash and iteration order stay as they are.
+	struct ResidentSlot
+	{
+		std::uint64_t key = 0;
+		Chunk        *chunk = nullptr;
+		std::uint32_t version = 0; // never a live chunkTopologyVersion
+	};
+	ResidentSlot                          residentSlots[64];
 };

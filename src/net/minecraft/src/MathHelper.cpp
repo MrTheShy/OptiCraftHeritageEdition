@@ -69,31 +69,22 @@ float MathHelper::sqrt_double(double d)
 #endif
 }
 
-int_t MathHelper::floor_float(float f)
-{
-	int_t i = JavaArithmetic::floatToInt(f);
-	return f < (float)i ? JavaArithmetic::intSub(i, 1) : i;
-}
-
 int_t MathHelper::func_40346_b(double d)
 {
 	const int_t shifted = JavaArithmetic::doubleToInt(d + 1024.0);
 	return JavaArithmetic::intSub(shifted, 1024);
 }
 
+#if PLATFORM_INTEGER_FLOOR_DOUBLE
 int_t MathHelper::floor_double(double d)
 {
-#if PLATFORM_INTEGER_FLOOR_DOUBLE
-	// Same value as the expression below, without the six libgcc calls a core
-	// with no double-precision FPU needs to evaluate it. See
-	// PS2_INTEGER_FLOOR_DOUBLE for the measurement and IntegerFloorDouble.h for
-	// the equivalence.
+	// Same value as the inline expression in MathHelper.h, without the six
+	// libgcc calls a core with no double-precision FPU needs to evaluate it.
+	// See PS2_INTEGER_FLOOR_DOUBLE for the measurement and
+	// IntegerFloorDouble.h for the equivalence.
 	return platformIntegerFloorDouble(d);
-#else
-	int_t i = JavaArithmetic::doubleToInt(d);
-	return d < (double)i ? JavaArithmetic::intSub(i, 1) : i;
-#endif
 }
+#endif
 
 long_t MathHelper::floor_double_long(double d)
 {

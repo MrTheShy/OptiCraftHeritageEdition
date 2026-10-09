@@ -25,6 +25,7 @@ protected:
 public:
 	AxisAlignedBB *getCollisionBox(Entity *entity) override;
 	AxisAlignedBB *getBoundingBox() override { return boundingBox; }
+	SolidEntityToken solidToken{this};
 	bool canBeCollidedWith() override;
 	bool attackEntityFrom(Entity *entity, int_t i) override;
 	bool attackEntityFrom(const DamageSource &source, int_t damage) override;

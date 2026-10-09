@@ -18,6 +18,8 @@
 #include "ChunkProviderGenerate.h"
 #include "McRegionChunkLoader.h"
 #include "AnvilChunkLoader.h"
+#include "RegionFile.h"
+#include "Config.h"
 #include "java/Arithmetic.h"
 #include "java/String.h"
 #include "java/System.h"
@@ -180,6 +182,30 @@ std::uint64_t ChunkProvider::chunkKey(int_t i, int_t j)
 	     | static_cast<std::uint32_t>(j);
 }
 
+bool ChunkProvider::findResidentChunk(int_t i, int_t j, Chunk *&chunk)
+{
+	const std::uint64_t key = chunkKey(i, j);
+	ResidentSlot &slot = residentSlots[(i & 7) | ((j & 7) << 3)];
+	if (slot.version == chunkTopologyVersion && slot.key == key)
+	{
+		chunk = slot.chunk;
+#if PLATFORM_VERIFY_ENTITY_SHORTCUTS
+		auto check = chunkMap.find(key);
+		if (check == chunkMap.end() || check->second != chunk)
+			MC_LOG_ERROR("chunk", "shortcut mismatch: residentSlots %d,%d\n", i, j);
+#endif
+		return true;
+	}
+	auto it = chunkMap.find(key);
+	if (it == chunkMap.end())
+		return false;
+	slot.key = key;
+	slot.chunk = it->second;
+	slot.version = chunkTopologyVersion;
+	chunk = it->second;
+	return true;
+}
+
 void ChunkProvider::markChunkTopologyChanged()
 {
 	++chunkTopologyVersion;
@@ -331,14 +357,30 @@ bool ChunkProvider::isOutsideUnloadRadius(int_t i, int_t j) const
 
 bool ChunkProvider::chunkExists(int_t i, int_t j)
 {
-	return chunkMap.count(chunkKey(i, j)) != 0;
+	Chunk *chunk;
+	return findResidentChunk(i, j, chunk);
+}
+
+Chunk *ChunkProvider::getChunkIfSaved(int_t i, int_t j)
+{
+	Chunk *chunk;
+	if (findResidentChunk(i, j, chunk))
+		return chunk;
+	AnvilChunkLoader *anvil = dynamic_cast<AnvilChunkLoader *>(chunkLoader);
+	if (anvil != nullptr && !anvil->isChunkSaved(i, j))
+		return nullptr;
+	return prepareChunk(i, j);
 }
 
 Chunk *ChunkProvider::getChunkIfExists(int_t i, int_t j)
 {
-	const std::uint64_t key = chunkKey(i, j);
-	auto it = chunkMap.find(key);
-	if (it == chunkMap.end())
+#if !PLATFORM_BOUNDED_WORLD
+	// lastChunk is always a resident map entry (provideChunk trusts it too).
+	if (lastChunk != nullptr && i == lastChunkX && j == lastChunkZ)
+		return lastChunk;
+#endif
+	Chunk *chunk;
+	if (!findResidentChunk(i, j, chunk))
 		return nullptr;
 
 #if PLATFORM_BOUNDED_WORLD
@@ -348,7 +390,6 @@ Chunk *ChunkProvider::getChunkIfExists(int_t i, int_t j)
 	if (lastChunk != nullptr && i == lastChunkX && j == lastChunkZ)
 		return lastChunk;
 
-	Chunk *chunk = it->second;
 	if (chunk != nullptr)
 		chunk->lastAccessTick = currentWorldTime();
 	if (chunk != nullptr && chunk != blankChunk)
@@ -896,8 +937,8 @@ Chunk *ChunkProvider::provideChunk(int_t i, int_t j)
 		return lastChunk;
 
 	const std::uint64_t key = chunkKey(i, j);
-	auto it = chunkMap.find(key);
-	if (it == chunkMap.end())
+	Chunk *resident;
+	if (!findResidentChunk(i, j, resident))
 	{
 #if PLATFORM_ASYNC_CHUNK_GENERATION && PLATFORM_PC_LEGACY
 		if (worldObj == nullptr || !worldObj->findingSpawnPoint)
@@ -966,15 +1007,15 @@ Chunk *ChunkProvider::provideChunk(int_t i, int_t j)
 		return prepareChunk(i, j);
 	}
 
-	if (it->second != nullptr)
-		it->second->lastAccessTick = currentWorldTime();
-	if (it->second != nullptr && it->second != blankChunk)
+	if (resident != nullptr)
+		resident->lastAccessTick = currentWorldTime();
+	if (resident != nullptr && resident != blankChunk)
 	{
-		lastChunk  = it->second;
+		lastChunk  = resident;
 		lastChunkX = i;
 		lastChunkZ = j;
 	}
-	return it->second;
+	return resident;
 }
 
 Chunk *ChunkProvider::loadChunkFromFile(int_t i, int_t j, bool &readFailed)
@@ -1071,6 +1112,13 @@ void ChunkProvider::unloadChunk(std::uint64_t key, Chunk *chunk)
 #endif
 
 	chunk->onChunkUnload();
+	// Last, right before the free: saving and onChunkUnload can look this
+	// chunk up again (it is still in chunkMap) and re-arm either cache with it.
+	if (lastChunk == chunk)
+		lastChunk = nullptr;
+	for (ResidentSlot &slot : residentSlots)
+		if (slot.chunk == chunk)
+			slot.version = 0;
 	delete chunk;
 }
 

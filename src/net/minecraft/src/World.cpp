@@ -2100,12 +2100,9 @@ int World::getSavedLightValue(EnumSkyBlock* enumSkyBlock, int x, int y, int z)
     if (x < -30000000 || z < -30000000 || x >= 30000000 || z >= 30000000)
         return enumSkyBlock->defaultLightValue;
 
-    const int_t chunkX = JavaArithmetic::intShr(x, 4);
-    const int_t chunkZ = JavaArithmetic::intShr(z, 4);
-    if (!chunkExists(chunkX, chunkZ))
-        return enumSkyBlock->defaultLightValue;
-
-    Chunk* chunk = getChunkFromChunkCoords(chunkX, chunkZ);
+    // One provider lookup instead of chunkExists + provideChunk (same result:
+    // IChunkProvider::getChunkIfExists is exactly that pair).
+    Chunk* chunk = getChunkIfExists(JavaArithmetic::intShr(x, 4), JavaArithmetic::intShr(z, 4));
     return chunk != nullptr
         ? chunk->getSavedLightValue(enumSkyBlock, x & 0xf, y, z & 0xf)
         : enumSkyBlock->defaultLightValue;
@@ -2749,8 +2746,13 @@ void World::onEntityRemoved(Entity* entity)
     {
         if (loaded == nullptr || loaded == entity)
             continue;
-        EntityCreature *creature = dynamic_cast<EntityCreature *>(loaded);
-        if (creature != nullptr && creature->getTarget() == entity)
+        // Virtual type check instead of dynamic_cast: ARM EABI compares
+        // type_info names with strcmp up the hierarchy, once per loaded
+        // entity per removal.
+        if (!loaded->isCreature())
+            continue;
+        EntityCreature *creature = static_cast<EntityCreature *>(loaded);
+        if (creature->getTarget() == entity)
             creature->setTarget(nullptr);
     }
 }
@@ -2808,7 +2810,7 @@ void World::detachEntityForWorldChange(Entity *entity)
         if (chunk != nullptr)
             chunk->removeEntity(entity);
     }
-    if (chunkProvider != nullptr)
+    if (chunkProvider != nullptr && entity->chunkListRefs != 0)
         chunkProvider->removeEntityFromLoadedChunks(entity);
     entity->addedToChunk = false;
 }
@@ -2862,25 +2864,50 @@ std::vector<AxisAlignedBB*> &World::getCollidingBoundingBoxes(Entity* entity, Ax
     }
 #endif
     
-    double d = 0.25;
-    const auto& list = getEntitiesWithinAABBExcludingEntity(entity, aabb->expand(d, d, d));
-    
+    if (Entity::solidEntityCount == 0)
+        return collidingBoundingBoxes;
+    const std::vector<AxisAlignedBB *> &entityBoxes = entityCollisionBoxes(entity, aabb);
+    collidingBoundingBoxes.insert(collidingBoundingBoxes.end(), entityBoxes.begin(), entityBoxes.end());
+    return collidingBoundingBoxes;
+}
+
+const std::vector<AxisAlignedBB *> &World::entityCollisionBoxes(Entity *entity, AxisAlignedBB *aabb)
+{
+    static std::vector<AxisAlignedBB *> boxes;
+    boxes.clear();
+    if (Entity::solidEntityCount == 0)
+        return boxes;
+    // Only boats give a box through getBoundingBox() and only boats and
+    // minecarts override getCollisionBox(other). Any other mover (particles,
+    // items, mobs, the player) therefore collides with just the boats
+    // overlapping the box, the same set the chunk query below keeps, without
+    // walking every entity in the chunks around it (1400 boat splashes a tick
+    // each scanned the 25 boats and 50 items beside them).
+    if (entity == nullptr || !entity->solidEntity)
+    {
+        for (Entity *solid : Entity::solidEntities)
+        {
+            if (solid == entity || solid->worldObj != this || !solid->addedToChunk)
+                continue;
+            AxisAlignedBB *box = solid->getBoundingBox();
+            if (box != nullptr && box->intersectsWith(aabb))
+                boxes.push_back(box);
+        }
+        return boxes;
+    }
+
+    const double d = 0.25;
+    const auto &list = getEntitiesWithinAABBExcludingEntity(entity, aabb->expand(d, d, d));
     for (size_t j2 = 0; j2 < list.size(); j2++)
     {
-        AxisAlignedBB* aabb1 = list[j2]->getBoundingBox();
+        AxisAlignedBB *aabb1 = list[j2]->getBoundingBox();
         if (aabb1 != nullptr && aabb1->intersectsWith(aabb))
-        {
-            collidingBoundingBoxes.push_back(aabb1);
-        }
-        
+            boxes.push_back(aabb1);
         aabb1 = entity->getCollisionBox(list[j2]);
         if (aabb1 != nullptr && aabb1->intersectsWith(aabb))
-        {
-            collidingBoundingBoxes.push_back(aabb1);
-        }
+            boxes.push_back(aabb1);
     }
-    
-    return collidingBoundingBoxes;
+    return boxes;
 }
 
 #if PLATFORM_EARLY_COLLISION_EXIT
@@ -2888,23 +2915,7 @@ bool World::hasCollidingBoundingBoxes(Entity *entity, AxisAlignedBB *aabb)
 {
     if (platformHasBlockCollision(this, aabb, collidingBoundingBoxes))
         return true;
-
-    const double expansion = 0.25;
-    const auto &entities = getEntitiesWithinAABBExcludingEntity(
-        entity, aabb->expand(expansion, expansion, expansion));
-
-    for (Entity *other : entities)
-    {
-        AxisAlignedBB *collision = other->getBoundingBox();
-        if (collision != nullptr && collision->intersectsWith(aabb))
-            return true;
-
-        collision = entity->getCollisionBox(other);
-        if (collision != nullptr && collision->intersectsWith(aabb))
-            return true;
-    }
-
-    return false;
+    return !entityCollisionBoxes(entity, aabb).empty();
 }
 #endif
 
@@ -2912,24 +2923,8 @@ bool World::hasCollidingBoundingBoxes(Entity *entity, AxisAlignedBB *aabb)
 void World::collectCollisionSweep(Entity *entity, AxisAlignedBB *aabb, PlatformCollisionSweep &sweep)
 {
     platformCollectBlockCollisionSweep(this, aabb, sweep);
-
-    const double d = 0.25;
-    const auto &list = getEntitiesWithinAABBExcludingEntity(entity, aabb->expand(d, d, d));
-
-    for (size_t j2 = 0; j2 < list.size(); j2++)
-    {
-        AxisAlignedBB *aabb1 = list[j2]->getBoundingBox();
-        if (aabb1 != nullptr && aabb1->intersectsWith(aabb))
-        {
-            platformAppendCollisionSweepBox(sweep, aabb1);
-        }
-
-        aabb1 = entity->getCollisionBox(list[j2]);
-        if (aabb1 != nullptr && aabb1->intersectsWith(aabb))
-        {
-            platformAppendCollisionSweepBox(sweep, aabb1);
-        }
-    }
+    for (AxisAlignedBB *box : entityCollisionBoxes(entity, aabb))
+        platformAppendCollisionSweepBox(sweep, box);
 }
 #endif
 
@@ -3147,16 +3142,64 @@ float World::getStarBrightness(float partialTicks)
     return f2 * f2 * 0.5f;
 }
 
-void World::scheduleBlockUpdate(int x, int y, int z, int blockId, int delay)
+bool World::tickBoxChunksExist(int_t x, int_t y, int_t z)
 {
     const int RANGE = 8;
+    const int_t minX = JavaArithmetic::intSub(x, RANGE);
+    const int_t minY = JavaArithmetic::intSub(y, RANGE);
+    const int_t minZ = JavaArithmetic::intSub(z, RANGE);
+    const int_t maxX = JavaArithmetic::intAdd(x, RANGE);
+    const int_t maxY = JavaArithmetic::intAdd(y, RANGE);
+    const int_t maxZ = JavaArithmetic::intAdd(z, RANGE);
+#if PLATFORM_CACHE_TICK_CHUNK_EXISTENCE
+    // Decoration schedules a tick for every gravel/sand block it places, each
+    // box re-asking the chunk map about the same few chunks. A chunk found
+    // resident stays resident until the provider adds or drops a chunk, which
+    // bumps its topology version; then the slots are forgotten. Same answer
+    // as checkChunksExist below (chunkExists has no side effects).
+    if (maxY < 0 || minY >= WorldHeight::HEIGHT)
+        return false;
+    const std::uint32_t version = chunkProvider->getChunkTopologyVersion();
+    if (version != 0)
+    {
+        if (version != tickChunkSlotsVersion || chunkProvider != tickChunkSlotsProvider)
+        {
+            // Block coordinates stay within +-2^25, so INT_MIN is never a chunk X.
+            for (TickChunkSlot &slot : tickChunkSlots)
+                slot.x = std::numeric_limits<int_t>::min();
+            tickChunkSlotsVersion = version;
+            tickChunkSlotsProvider = chunkProvider;
+        }
+        const int_t minChunkX = JavaArithmetic::intShr(minX, 4);
+        const int_t minChunkZ = JavaArithmetic::intShr(minZ, 4);
+        const int_t maxChunkX = JavaArithmetic::intShr(maxX, 4);
+        const int_t maxChunkZ = JavaArithmetic::intShr(maxZ, 4);
+        for (int_t cx = minChunkX; cx <= maxChunkX; cx++)
+        {
+            for (int_t cz = minChunkZ; cz <= maxChunkZ; cz++)
+            {
+                TickChunkSlot &slot = tickChunkSlots[(cx & 3) | ((cz & 3) << 2)];
+                if (slot.x == cx && slot.z == cz)
+                    continue;
+                if (!chunkExists(cx, cz))
+                    return false;
+                slot.x = cx;
+                slot.z = cz;
+            }
+        }
+        return true;
+    }
+#endif
+    return checkChunksExist(minX, minY, minZ, maxX, maxY, maxZ);
+}
 
+void World::scheduleBlockUpdate(int x, int y, int z, int blockId, int delay)
+{
     // Immediate updates do not need a heap allocation. The previous code
     // allocated NextTickListEntry and returned without deleting it.
     if (scheduledUpdatesAreImmediate)
     {
-        if (checkChunksExist(JavaArithmetic::intSub(x, RANGE), JavaArithmetic::intSub(y, RANGE), JavaArithmetic::intSub(z, RANGE),
-                             JavaArithmetic::intAdd(x, RANGE), JavaArithmetic::intAdd(y, RANGE), JavaArithmetic::intAdd(z, RANGE)))
+        if (tickBoxChunksExist(x, y, z))
         {
             int currentBlockId = getBlockId(x, y, z);
             if (currentBlockId == blockId && currentBlockId > 0)
@@ -3167,8 +3210,7 @@ void World::scheduleBlockUpdate(int x, int y, int z, int blockId, int delay)
         return;
     }
 
-    if (!checkChunksExist(JavaArithmetic::intSub(x, RANGE), JavaArithmetic::intSub(y, RANGE), JavaArithmetic::intSub(z, RANGE),
-                          JavaArithmetic::intAdd(x, RANGE), JavaArithmetic::intAdd(y, RANGE), JavaArithmetic::intAdd(z, RANGE)))
+    if (!tickBoxChunksExist(x, y, z))
     {
         return;
     }
@@ -3266,6 +3308,13 @@ std::vector<NextTickListEntry *> World::getPendingBlockUpdates(Chunk *chunk, boo
 // start of every updateEntities() pass and consumed by getPathToEntity()/
 // getEntityPathToXYZ(). A single world ticks on PS2, so a file-static is enough.
 static int_t s_pathfindBudgetThisTick = 0;
+// Nodes all searches of this tick may still expand (PLATFORM_PATHFIND_NODE_BUDGET_PER_TICK).
+static int_t s_pathfindNodeBudgetThisTick = 0;
+#endif
+#if PLATFORM_PROFILE_RENDER_PHASES
+// Time and expanded nodes spent in A* during this updateEntities() pass.
+static long long s_profilePathNs = 0;
+static long long s_profilePathNodes = 0;
 #endif
 
 void World::trackLoadedEntityPointer(Entity *entity)
@@ -3284,8 +3333,8 @@ void World::trackLoadedEntityPointer(Entity *entity)
 void World::untrackLoadedEntityPointer(Entity *entity)
 {
 #if PLATFORM_PC_LEGACY
-    if (entity != nullptr)
-        loadedEntityPointerSet.erase(entity);
+    if (entity != nullptr && loadedEntityPointerSet.erase(entity) != 0)
+        ++loadedEntityPointerEpoch;
 #elif PLATFORM_PS2
     if (entity != nullptr && !loadedEntityPointerIndexOverflow)
         loadedEntityPointerIndex.erase(entity);
@@ -3298,6 +3347,7 @@ void World::rebuildLoadedEntityPointerSet() const
 {
 #if PLATFORM_PC_LEGACY
     loadedEntityPointerSet.clear();
+    ++loadedEntityPointerEpoch;
     loadedEntityPointerSet.insert(loadedEntityList.begin(), loadedEntityList.end());
 #elif PLATFORM_PS2
     loadedEntityPointerIndex.clear();
@@ -3355,8 +3405,19 @@ void World::destroyEntity(Entity *entity)
     if (entity == nullptr)
         return;
 
-    if (chunkProvider != nullptr)
+    // The sweep walks every section of every loaded chunk (~400 us on the
+    // Vita, entRemove reached 10 ms for 25 landing gravel blocks). It can only
+    // find something while a chunk list still holds the pointer.
+    if (chunkProvider != nullptr && entity->chunkListRefs != 0)
         chunkProvider->removeEntityFromLoadedChunks(entity);
+#if PLATFORM_VERIFY_ENTITY_SHORTCUTS
+    else if (chunkProvider != nullptr)
+    {
+        chunkProvider->removeEntityFromLoadedChunks(entity); // finds nothing, or refs < 0
+        if (entity->chunkListRefs != 0)
+            MC_LOG_ERROR("world", "shortcut mismatch: chunkListRefs %d\n", (int)entity->chunkListRefs);
+    }
+#endif
     entity->addedToChunk = false;
     deleteWorldOwnedEntity(entity);
 }
@@ -3374,7 +3435,15 @@ static const char *profileClassName(const char *mangled)
 void World::updateEntities()
 {
 #if PLATFORM_BOUNDED_PATHFIND
-    s_pathfindBudgetThisTick = PLATFORM_PATHFIND_BUDGET_PER_TICK;
+    {
+        const bool limited = platformPerf().pathLimits;
+        s_pathfindBudgetThisTick = limited ? PLATFORM_PATHFIND_BUDGET_PER_TICK : 0x7fffffff;
+        s_pathfindNodeBudgetThisTick = limited ? PLATFORM_PATHFIND_NODE_BUDGET_PER_TICK : 0x7fffffff;
+    }
+#endif
+#if PLATFORM_PROFILE_RENDER_PHASES
+    s_profilePathNs = 0;
+    s_profilePathNodes = 0;
 #endif
 #if PLATFORM_PROFILE_RENDER_PHASES
     // This function is the whole of the client tick phase named "entities",
@@ -5408,10 +5477,14 @@ void World::updateBlocksAndPlayCaveSounds()
         {
             const int_t attempts = (int_t)(PLATFORM_RANDOM_BLOCK_TICKS_PER_CHUNK * randomTickScale);
             const int_t sectionStart = (int_t)((s_tickCursor + visited) % (size_t)tickableSectionCount);
+            // Same sequence as (sectionStart + attempt % n) % n, without the two
+            // software divides per attempt (no hardware divider on the A9).
+            int_t sectionIndex = sectionStart;
             for (int_t attempt = 0; attempt < attempts; ++attempt)
             {
-                const int_t sectionOffset = attempt % tickableSectionCount;
-                tickRandomBlock(tickableSections[(sectionStart + sectionOffset) % tickableSectionCount]);
+                tickRandomBlock(tickableSections[sectionIndex]);
+                if (++sectionIndex == tickableSectionCount)
+                    sectionIndex = 0;
             }
         }
 #else
@@ -5499,13 +5572,7 @@ bool World::TickUpdates(bool flag)
         scheduledTickOrder.remove(entry);
 #endif
 
-        const int RANGE = 8;
-        if (!checkChunksExist(JavaArithmetic::intSub(entry->xCoord, RANGE),
-                              JavaArithmetic::intSub(entry->yCoord, RANGE),
-                              JavaArithmetic::intSub(entry->zCoord, RANGE),
-                              JavaArithmetic::intAdd(entry->xCoord, RANGE),
-                              JavaArithmetic::intAdd(entry->yCoord, RANGE),
-                              JavaArithmetic::intAdd(entry->zCoord, RANGE)))
+        if (!tickBoxChunksExist(entry->xCoord, entry->yCoord, entry->zCoord))
         {
             delete entry;
             continue;
@@ -5880,7 +5947,9 @@ PathEntity* World::getPathToEntity(Entity* entity, Entity* target, float maxRang
 #if PLATFORM_BOUNDED_PATHFIND
     // Round-robin: only a few mobs may run a full A* search per tick. Mobs that
     // miss their turn keep their previous path (or none) and retry next tick.
-    if (s_pathfindBudgetThisTick <= 0)
+    // Under 40 nodes left a search would only return a stub of a path; the mob
+    // keeps its previous path and asks again next tick instead.
+    if (s_pathfindBudgetThisTick <= 0 || s_pathfindNodeBudgetThisTick < 40)
         return nullptr;
     s_pathfindBudgetThisTick--;
 #endif
@@ -5897,8 +5966,23 @@ PathEntity* World::getPathToEntity(Entity* entity, Entity* target, float maxRang
     
     ChunkCache chunkCache(this, minX, minY, minZ, maxX, maxY, maxZ);
 #if PLATFORM_REUSE_PATHFINDER
-    return getReusablePathfinder(&chunkCache, openDoors, breakDoors, avoidWater, canSwim)
-        ->createEntityPathTo(entity, target, maxRange);
+    Pathfinder *finder = getReusablePathfinder(&chunkCache, openDoors, breakDoors, avoidWater, canSwim);
+#if PLATFORM_BOUNDED_PATHFIND
+    finder->maxNodes = std::min<int_t>(platformPerf().pathLimits ? PLATFORM_PATHFIND_MAX_NODES : 0x7fffffff,
+                                       s_pathfindNodeBudgetThisTick);
+#endif
+#if PLATFORM_PROFILE_RENDER_PHASES
+    const long_t pathStartNs = System::nanoTime();
+#endif
+    PathEntity *found = finder->createEntityPathTo(entity, target, maxRange);
+#if PLATFORM_PROFILE_RENDER_PHASES
+    s_profilePathNs += System::nanoTime() - pathStartNs;
+    s_profilePathNodes += finder->nodesExpandedLast;
+#endif
+#if PLATFORM_BOUNDED_PATHFIND
+    s_pathfindNodeBudgetThisTick -= std::min(s_pathfindNodeBudgetThisTick, finder->nodesExpandedLast);
+#endif
+    return found;
 #else
     Pathfinder pathfinder(&chunkCache, openDoors, breakDoors, avoidWater, canSwim);
     return pathfinder.createEntityPathTo(entity, target, maxRange);
@@ -5919,7 +6003,9 @@ PathEntity* World::getEntityPathToXYZ(Entity* entity, int x, int y, int z, float
 PathEntity* World::getEntityPathToXYZ(Entity* entity, int x, int y, int z, float maxRange, bool openDoors, bool breakDoors, bool avoidWater, bool canSwim)
 {
 #if PLATFORM_BOUNDED_PATHFIND
-    if (s_pathfindBudgetThisTick <= 0)
+    // Under 40 nodes left a search would only return a stub of a path; the mob
+    // keeps its previous path and asks again next tick instead.
+    if (s_pathfindBudgetThisTick <= 0 || s_pathfindNodeBudgetThisTick < 40)
         return nullptr;
     s_pathfindBudgetThisTick--;
 #endif
@@ -5936,8 +6022,23 @@ PathEntity* World::getEntityPathToXYZ(Entity* entity, int x, int y, int z, float
     
     ChunkCache chunkCache(this, minX, minY, minZ, maxX, maxY, maxZ);
 #if PLATFORM_REUSE_PATHFINDER
-    return getReusablePathfinder(&chunkCache, openDoors, breakDoors, avoidWater, canSwim)
-        ->createEntityPathTo(entity, x, y, z, maxRange);
+    Pathfinder *finder = getReusablePathfinder(&chunkCache, openDoors, breakDoors, avoidWater, canSwim);
+#if PLATFORM_BOUNDED_PATHFIND
+    finder->maxNodes = std::min<int_t>(platformPerf().pathLimits ? PLATFORM_PATHFIND_MAX_NODES : 0x7fffffff,
+                                       s_pathfindNodeBudgetThisTick);
+#endif
+#if PLATFORM_PROFILE_RENDER_PHASES
+    const long_t pathStartNs = System::nanoTime();
+#endif
+    PathEntity *found = finder->createEntityPathTo(entity, x, y, z, maxRange);
+#if PLATFORM_PROFILE_RENDER_PHASES
+    s_profilePathNs += System::nanoTime() - pathStartNs;
+    s_profilePathNodes += finder->nodesExpandedLast;
+#endif
+#if PLATFORM_BOUNDED_PATHFIND
+    s_pathfindNodeBudgetThisTick -= std::min(s_pathfindNodeBudgetThisTick, finder->nodesExpandedLast);
+#endif
+    return found;
 #else
     Pathfinder pathfinder(&chunkCache, openDoors, breakDoors, avoidWater, canSwim);
     return pathfinder.createEntityPathTo(entity, x, y, z, maxRange);

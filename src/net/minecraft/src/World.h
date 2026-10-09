@@ -121,7 +121,9 @@ private:
 public:
 	bool getAnimationFrame(int_t i);
 	bool saveAllChunks(int_t progressStage);
-	int_t getBlockId(int_t i, int_t j, int_t k) override;
+	// final: WorldClient overrides none of these, so a call through World*
+	// (every block read in the game) is direct.
+	int_t getBlockId(int_t i, int_t j, int_t k) override final;
 	bool isAirBlock(int_t i, int_t j, int_t k) override;
 	bool blockExists(int_t i, int_t j, int_t k);
 	bool doChunksNearChunkExist(int_t i, int_t j, int_t k, int_t l);
@@ -143,8 +145,8 @@ public:
 	Chunk *getChunkFromChunkCoords(int_t i, int_t j);
 	virtual bool setBlockAndMetadata(int_t i, int_t j, int_t k, int_t l, int_t i1);
 	virtual bool setBlock(int_t i, int_t j, int_t k, int_t l);
-	Material *getBlockMaterial(int_t i, int_t j, int_t k) override;
-	int_t getBlockMetadata(int_t i, int_t j, int_t k) override;
+	Material *getBlockMaterial(int_t i, int_t j, int_t k) override final;
+	int_t getBlockMetadata(int_t i, int_t j, int_t k) override final;
 	void setBlockMetadataWithNotify(int_t i, int_t j, int_t k, int_t l);
 	virtual bool setBlockMetadata(int_t i, int_t j, int_t k, int_t l);
 	bool setBlockWithNotify(int_t i, int_t j, int_t k, int_t l);
@@ -286,6 +288,8 @@ public:
 	void addWorldAccess(IWorldAccess *iworldaccess);
 	void removeWorldAccess(IWorldAccess *iworldaccess);
 	std::vector<AxisAlignedBB *> &getCollidingBoundingBoxes(Entity *entity, AxisAlignedBB *axisalignedbb);
+	// The entity boxes the collision queries add for `entity` inside the box.
+	const std::vector<AxisAlignedBB *> &entityCollisionBoxes(Entity *entity, AxisAlignedBB *axisalignedbb);
 #if PLATFORM_EARLY_COLLISION_EXIT
 	bool hasCollidingBoundingBoxes(Entity *entity, AxisAlignedBB *axisalignedbb);
 #endif
@@ -482,6 +486,17 @@ public:
 private:
 #if PLATFORM_PC_LEGACY
 	mutable std::unordered_set<const Entity *> loadedEntityPointerSet;
+	// Bumped whenever a pointer can leave loadedEntityPointerSet (erase,
+	// clear). While it holds still, a pointer found in the set stays there.
+	mutable std::uint32_t loadedEntityPointerEpoch = 1;
+public:
+	// Nonzero epoch if isLoadedEntityPointer() would answer from the set as
+	// it is (no rebuild pending); 0 otherwise.
+	std::uint32_t stableLoadedEntityPointerEpoch() const
+	{
+		return loadedEntityPointerSet.size() == loadedEntityList.size() ? loadedEntityPointerEpoch : 0u;
+	}
+private:
 #elif PLATFORM_PS2
 	mutable Ps2EntityPointerIndex loadedEntityPointerIndex;
 	mutable bool loadedEntityPointerIndexOverflow = false;
@@ -492,6 +507,16 @@ private:
 	JavaHashSet<NextTickListEntry *, NextTickListEntryHash, NextTickListEntryEqual> scheduledTickOrder;
 #if PLATFORM_PC_LEGACY
 	PcLegacyTickScheduler *pcLegacyTickScheduler = nullptr;
+#endif
+	// checkChunksExist over the +-8 box around a scheduled tick.
+	bool tickBoxChunksExist(int_t x, int_t y, int_t z);
+#if PLATFORM_CACHE_TICK_CHUNK_EXISTENCE
+	// Chunks found resident, direct-mapped by (chunkX & 3, chunkZ & 3). Valid
+	// while the provider and its topology version are unchanged.
+	struct TickChunkSlot { int_t x; int_t z; };
+	TickChunkSlot tickChunkSlots[16];
+	const IChunkProvider *tickChunkSlotsProvider = nullptr;
+	std::uint32_t tickChunkSlotsVersion = 0;
 #endif
 
 public:

@@ -16,9 +16,15 @@ public:
     void bind(int_t baseChunkX, int_t baseChunkZ, Chunk *const chunks[CHUNK_COUNT]);
 
     Chunk *getChunk(int_t x, int_t y, int_t z) const;
-    bool tryGetBlockId(int_t x, int_t y, int_t z, int_t &blockId);
+    // Inline gate: inactive nearly always (no population in progress), and
+    // this is on every World::getBlockId.
+    bool tryGetBlockId(int_t x, int_t y, int_t z, int_t &blockId)
+    {
+        return active && tryGetBlockIdActive(x, y, z, blockId);
+    }
 
 private:
+    bool tryGetBlockIdActive(int_t x, int_t y, int_t z, int_t &blockId);
     int_t blockIndex(int_t x, int_t y, int_t z, int_t &chunkIndex,
                      int_t &sectionIndex, int_t &localX, int_t &localY, int_t &localZ) const;
 

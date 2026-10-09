@@ -13,6 +13,7 @@ class EntityCreature : public EntityLiving
 public:
 	EntityCreature(World *world);
 	~EntityCreature() override;
+	bool isCreature() const override { return true; }
 
 protected:
 	virtual bool isMovementCeased();

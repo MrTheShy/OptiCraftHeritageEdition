@@ -11,7 +11,6 @@
 #include <stdexcept>
 
 static constexpr ulong_t RANDOM_MUL = 0x5DEECE66DULL;
-static constexpr ulong_t RANDOM_ADD = 0xBULL;
 static constexpr ulong_t RANDOM_AND = (1ULL << 48) - 1ULL;
 
 namespace
@@ -87,76 +86,6 @@ void Random::setSeed(long_t set_seed)
 	nextNextGaussian = 0.0;
 }
 
-int_t Random::next(int_t bits)
-{
-	const ulong_t seedBits = static_cast<ulong_t>(seed);
-#if PLATFORM_RANDOM_SPLIT_MULTIPLY
-	// (seed * MUL + ADD) mod 2^48 without a 64x64 multiply. With
-	// seed = sh*2^32 + sl (sh 16 bits) and MUL = 5*2^32 + ml, the product's
-	// low 64 bits are sl*ml + (sh*ml + sl*5) * 2^32; only the low 16 bits of
-	// that upper term survive the 48-bit mask, so it can wrap in 32 bits. The
-	// one widening 32x32 multiply is a single instruction on these cores.
-	const std::uint32_t sl = static_cast<std::uint32_t>(seedBits);
-	const std::uint32_t sh = static_cast<std::uint32_t>(seedBits >> 32);
-	const std::uint32_t ml = static_cast<std::uint32_t>(RANDOM_MUL);
-	const std::uint32_t mh = static_cast<std::uint32_t>(RANDOM_MUL >> 32);
-	const std::uint64_t low = static_cast<std::uint64_t>(sl) * ml;
-	std::uint32_t hi = static_cast<std::uint32_t>(low >> 32) + sh * ml + sl * mh;
-	const std::uint32_t lo = static_cast<std::uint32_t>(low) + static_cast<std::uint32_t>(RANDOM_ADD);
-	if (lo < static_cast<std::uint32_t>(low))
-		++hi;
-	seed = static_cast<long_t>((static_cast<ulong_t>(hi & 0xffffu) << 32) | lo);
-#else
-	seed = static_cast<long_t>((seedBits * RANDOM_MUL + RANDOM_ADD) & RANDOM_AND);
-#endif
-	return JavaArithmetic::intFromBits(static_cast<uint_t>(static_cast<ulong_t>(seed) >> (48 - bits)));
-}
-
-bool Random::nextBoolean()
-{
-	return next(1) == 1;
-}
-
-int_t Random::nextInt()
-{
-	return next(32);
-}
-
-int_t Random::nextInt(int_t bound)
-{
-	if (bound <= 0)
-		throw std::invalid_argument("bound must be positive");
-
-	const int_t m = bound - 1;
-	int_t r = next(31);
-	if ((bound & m) == 0)
-	{
-		// next(31) is non-negative, so this multiplication/shift is defined and
-		// matches java.util.Random exactly. Both operands fit 32 bits, so the
-		// widening form lets the compiler use one 32x32->64 multiply.
-		return static_cast<int_t>((static_cast<std::uint64_t>(static_cast<std::uint32_t>(bound)) *
-		                           static_cast<std::uint32_t>(r)) >> 31);
-	}
-
-	for (;;)
-	{
-		const int_t u = r;
-		r = u % bound;
-
-		// Java int arithmetic wraps modulo 2^32.  The source expression
-		// `u - r + m < 0` relies on that overflow for the rejection test; signed
-		// overflow would be undefined in C++.  Reproduce the Java sign bit
-		// explicitly in uint32_t.
-		const std::uint32_t wrapped = static_cast<std::uint32_t>(u)
-		                            - static_cast<std::uint32_t>(r)
-		                            + static_cast<std::uint32_t>(m);
-		if ((wrapped & 0x80000000u) == 0)
-			return r;
-
-		r = next(31);
-	}
-}
-
 long_t Random::nextLong()
 {
 	// Java performs two's-complement long arithmetic here.  Building the bit
@@ -169,11 +98,6 @@ long_t Random::nextLong()
 	static_assert(sizeof(result) == sizeof(bits), "Unexpected Java long size");
 	std::memcpy(&result, &bits, sizeof(result));
 	return result;
-}
-
-float Random::nextFloat()
-{
-	return next(24) / static_cast<float>(1LL << 24);
 }
 
 double Random::nextDouble()

@@ -4,6 +4,7 @@
 #include "java/String.h"
 #include "java/Random.h"
 #include <typeinfo>
+#include <algorithm>
 #include <vector>
 #include <cstdint>
 
@@ -93,6 +94,32 @@ protected:
 
 public:
 	virtual AxisAlignedBB *getBoundingBox();
+	// Live entities that override getBoundingBox()/getCollisionBox() (boats,
+	// minecarts). While there are none, World::getCollidingBoundingBoxes
+	// cannot get a box from any entity and skips the neighbour query, which was
+	// O(n^2) for a pile of dropped items and every particle near it.
+	static int_t solidEntityCount;
+	// Those entities, for World::entityCollisionBoxes.
+	static std::vector<Entity *> solidEntities;
+	// Set on boats and minecarts: their getCollisionBox(other) can return a box.
+	bool solidEntity = false;
+	struct SolidEntityToken
+	{
+		explicit SolidEntityToken(Entity *owner) : owner(owner)
+		{
+			owner->solidEntity = true;
+			solidEntities.push_back(owner);
+			++solidEntityCount;
+		}
+		~SolidEntityToken()
+		{
+			solidEntities.erase(std::find(solidEntities.begin(), solidEntities.end(), owner));
+			--solidEntityCount;
+		}
+		Entity *owner;
+		SolidEntityToken(const SolidEntityToken &) = delete;
+		SolidEntityToken &operator=(const SolidEntityToken &) = delete;
+	};
 
 protected:
 	virtual void dealFireDamage(int_t i);
@@ -204,6 +231,7 @@ public:
 	virtual bool isMob()      const { return false; }
 	virtual bool isAnimal()   const { return false; }
 	virtual bool isWaterMob() const { return false; }
+	virtual bool isCreature() const { return false; }
 	bool isAssignableTo(const std::type_info &type) const;
 	// Concrete-type identity; each leaf class sets CLASS_ID and overrides this
 	virtual int_t getEntityClassID() const { return 0; }
@@ -324,6 +352,12 @@ private:
 	double entityRiderYawDelta;
 public:
 	bool addedToChunk;
+	// How many chunk section lists hold this pointer (Chunk::addEntity adds,
+	// Chunk::removeEntity* subtracts what it erased). Zero means no list can
+	// hold it, so World::destroyEntity can skip sweeping every loaded chunk.
+	// A chunk freed with the entity still listed leaves it above zero: the
+	// sweep then runs as before.
+	int_t chunkListRefs = 0;
 	int_t chunkCoordX;
 	int_t chunkCoordY;
 	int_t chunkCoordZ;

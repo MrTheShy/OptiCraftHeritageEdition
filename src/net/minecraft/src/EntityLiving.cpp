@@ -1374,10 +1374,11 @@ void EntityLiving::moveEntityWithHeading(float f, float f1)
 	else
 	{
 		float f2 = 0.91f;
+		int_t i = 0;
 		if (onGround)
 		{
 			f2 = 546.0f * 0.1f * 0.1f * 0.1f;
-			int_t i = worldObj->getBlockId(MathHelper::floor_double(posX), MathHelper::floor_double(boundingBox->minY) - 1, MathHelper::floor_double(posZ));
+			i = worldObj->getBlockId(MathHelper::floor_double(posX), MathHelper::floor_double(boundingBox->minY) - 1, MathHelper::floor_double(posZ));
 			if (i > 0)
 			{
 				f2 = Block::blocksList[i]->slipperiness * 0.91f;
@@ -1390,7 +1391,9 @@ void EntityLiving::moveEntityWithHeading(float f, float f1)
 		if (onGround)
 		{
 			f2 = 546.0f * 0.1f * 0.1f * 0.1f;
-			int_t j = worldObj->getBlockId(MathHelper::floor_double(posX), MathHelper::floor_double(boundingBox->minY) - 1, MathHelper::floor_double(posZ));
+			// Java reads the same cell again; moveFlying only changed motion,
+			// so position, box and world are what they were for i.
+			const int_t j = i;
 			if (j > 0)
 			{
 				f2 = Block::blocksList[j]->slipperiness * 0.91f;
@@ -1675,7 +1678,10 @@ void EntityLiving::onLivingUpdate()
 
 void EntityLiving::updatePotionEffects()
 {
-	const std::vector<int_t> potionIds = activePotionOrder.valuesInIterationOrder();
+	// Nearly every mob has no effect: skip building the order vector (a walk
+	// of the bucket array) when there is nothing to visit.
+	const std::vector<int_t> potionIds = activePotionOrder.size() != 0
+		? activePotionOrder.valuesInIterationOrder() : std::vector<int_t>();
 	for (int_t potionId : potionIds)
 	{
 		auto it = activePotionsMap.find(potionId);
