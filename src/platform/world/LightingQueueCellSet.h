@@ -4,6 +4,7 @@
 #include <cstddef>
 
 #include "java/Type.h"
+#include "platform/PlatformTuning.h"
 
 class EnumSkyBlock;
 
@@ -23,7 +24,8 @@ class EnumSkyBlock;
 class LightingQueueCellSet
 {
 public:
-    static constexpr std::size_t SLOT_COUNT = 4096;
+    static constexpr std::size_t SLOT_BITS = PLATFORM_LIGHTING_CELL_SET_BITS;
+    static constexpr std::size_t SLOT_COUNT = std::size_t(1) << SLOT_BITS;
 
     static ulong_t key(const EnumSkyBlock *type, int_t x, int_t y, int_t z);
 

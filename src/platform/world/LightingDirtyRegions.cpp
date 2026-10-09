@@ -1,3 +1,4 @@
+#include "platform/Profiler.h"
 #include "platform/world/LightingDirtyRegions.h"
 
 #include <cstdint>
@@ -59,7 +60,10 @@ void LightingDirtyRegions::flush(World *world, Region &region)
     region.used = false;
     ++flushedCount;
     if (world != nullptr)
+    {
+        platformProfileTickPhase("#dirtyLightFlush", 1);
         world->markBlocksDirty(region.minX, region.minY, region.minZ, region.maxX, region.maxY, region.maxZ);
+    }
 }
 
 void LightingDirtyRegions::end(World *world)

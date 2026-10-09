@@ -975,7 +975,19 @@ void Minecraft::run()
 
                 const long_t clientLightingStartNs = System::nanoTime();
                 if (theWorld != nullptr)
+                {
+#if PLATFORM_LIGHTING_SECTION_QUEUE && defined(VITA_PLATFORM)
+                    // Single player: the queue drains on cores 1-2 during this
+                    // frame's render and swap (World::beginAsyncLighting); the
+                    // multiplayer world keeps the bounded drain here.
+                    if (theWorld->multiplayerWorld)
+                        theWorld->updatingLighting();
+                    else
+                        theWorld->beginAsyncLighting();
+#else
                     theWorld->updatingLighting();
+#endif
+                }
                 ClientProfiler::lighting(System::nanoTime() - clientLightingStartNs);
 
                 const long_t swapStartNs = System::nanoTime();

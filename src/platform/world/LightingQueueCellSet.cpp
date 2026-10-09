@@ -30,7 +30,7 @@ std::size_t LightingQueueCellSet::slotOf(ulong_t cellKey)
     const std::uint32_t folded = static_cast<std::uint32_t>(cellKey) ^
                                  static_cast<std::uint32_t>(cellKey >> 32);
     const std::uint32_t mixed = folded * 0x9E3779B1u;
-    return static_cast<std::size_t>(mixed >> 20) & (SLOT_COUNT - 1);
+    return static_cast<std::size_t>(mixed >> (32 - SLOT_BITS)) & (SLOT_COUNT - 1);
 }
 
 bool LightingQueueCellSet::insert(ulong_t cellKey)

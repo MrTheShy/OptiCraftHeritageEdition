@@ -112,6 +112,100 @@
 #include "platform/world/PlatformBlockCollisionSweeper.h"
 #endif
 #include "platform/world/StreamingFrameBudget.h"
+#include "platform/world/LightingFrameBudget.h"
+#include "platform/world/LightingCellRelax.h"
+#include "Config.h"
+
+#include <atomic>
+#include <condition_variable>
+#include <thread>
+#include <unordered_map>
+#ifdef VITA_PLATFORM
+#include <psp2/kernel/threadmgr.h>
+#endif
+
+#if PLATFORM_LIGHTING_SECTION_QUEUE
+// The light queue drained on cores 1-2 while the game thread renders and swaps
+// (World::beginAsyncLighting / endAsyncLighting). Nothing the worker touches is
+// changed by the game thread in that window: blocks change and chunks are freed
+// only in ticks, which come after endAsyncLighting. It finds chunks in a copy of
+// the resident list, never through the provider's map (the renderer may load a
+// chunk meanwhile), and it leaves to the game thread everything that reaches the
+// renderer or allocates: render marks (dirty) and writes into a section not yet
+// allocated (deferred). The queue's fixed point does not depend on the order
+// cells run in, so taking cells on another thread settles to the same light.
+struct World::AsyncLighting
+{
+    struct Deferred
+    {
+        int_t type, x, y, z, value;
+    };
+
+    explicit AsyncLighting(World *owner) : world(owner) {}
+    ~AsyncLighting()
+    {
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            quit = true;
+            stop = true;
+        }
+        wake.notify_all();
+        if (thread.joinable())
+            thread.join();
+    }
+
+    void drain();
+    void loop()
+    {
+#ifdef VITA_PLATFORM
+        sceKernelChangeThreadCpuAffinityMask(sceKernelGetThreadId(),
+            SCE_KERNEL_CPU_MASK_USER_1 | SCE_KERNEL_CPU_MASK_USER_2);
+#endif
+        for (;;)
+        {
+            {
+                std::unique_lock<std::mutex> lock(mutex);
+                wake.wait(lock, [this] { return running || quit; });
+                if (quit)
+                    return;
+            }
+            drain();
+            {
+                std::lock_guard<std::mutex> lock(mutex);
+                running = false;
+            }
+            done.notify_all();
+        }
+    }
+
+    World *world;
+    std::thread thread;
+    std::mutex mutex;
+    std::condition_variable wake;
+    std::condition_variable done;
+    bool running = false;
+    bool quit = false;
+    std::atomic<bool> stop{false};
+    std::unordered_map<std::uint64_t, Chunk *> chunks;
+    std::uint32_t chunksVersion = 0;
+    bool chunksValid = false;
+    std::vector<std::array<int_t, 3>> dirty;
+    std::vector<Deferred> deferred;
+    std::uint32_t cellsRun = 0;
+    std::uint32_t changed = 0;
+
+    static std::uint64_t key(int_t chunkX, int_t chunkZ)
+    {
+        return (static_cast<std::uint64_t>(static_cast<std::uint32_t>(chunkX)) << 32) |
+            static_cast<std::uint32_t>(chunkZ);
+    }
+    Chunk *find(int_t chunkX, int_t chunkZ) const
+    {
+        const auto it = chunks.find(key(chunkX, chunkZ));
+        return it != chunks.end() ? it->second : nullptr;
+    }
+};
+#endif
 
 static bool isSafeSpawnBlock(int_t blockId)
 {
@@ -267,6 +361,10 @@ WorldChunkManager* World::getWorldChunkManager()
 
 World::~World()
 {
+#if PLATFORM_LIGHTING_SECTION_QUEUE
+    // Before the chunks it reads go away.
+    asyncLighting.reset();
+#endif
     // The same object can appear in the world list, a chunk list and an unload
     // queue.  Destroy each allocation once, after providers no longer use it.
     std::unordered_set<Entity *> entities;
@@ -1377,7 +1475,10 @@ bool World::setBlockAndMetadataForPopulation(int_t x, int_t y, int_t z, int_t bl
 bool World::batchPopulationLightingUpdate(EnumSkyBlock *type, int_t minX, int_t minY, int_t minZ,
                                           int_t maxX, int_t maxY, int_t maxZ)
 {
-#if PLATFORM_BATCH_POPULATION_LIGHTING
+    // The section queue takes the cells themselves: a pending cell costs one bit
+    // however often decoration asks for it, while a batch box recomputed its
+    // whole bounding box (up to a full section per batch flush) for a few cells.
+#if PLATFORM_BATCH_POPULATION_LIGHTING && !PLATFORM_LIGHTING_SECTION_QUEUE
     if (!populationFastPathActive || type == nullptr || minX > maxX || minY > maxY || minZ > maxZ)
         return false;
 
@@ -4441,6 +4542,10 @@ void World::saveWorldIndirectly(IProgressUpdate* progressUpdate)
 
 bool World::updatingLighting()
 {
+#if PLATFORM_LIGHTING_SECTION_QUEUE
+    // A synchronous drain (preload) never runs beside the worker.
+    endAsyncLighting();
+#endif
     if (lightingUpdatesCounter >= 50)
         return false;
 
@@ -4459,12 +4564,12 @@ bool World::updatingLighting()
         // it finish this frame so the section is dirtied once, with its final
         // light, instead of once per frame of propagation.
         const bool interactiveBurst = PLATFORM_LIGHTING_INTERACTIVE_BURST > 0 &&
-            (int)lightingToUpdate.size() <= PLATFORM_LIGHTING_INTERACTIVE_QUEUE_MAX;
+            (int)getPendingLightingUpdateCount() <= PLATFORM_LIGHTING_INTERACTIVE_QUEUE_MAX;
         if (interactiveBurst && count < PLATFORM_LIGHTING_INTERACTIVE_BURST)
             count = PLATFORM_LIGHTING_INTERACTIVE_BURST;
 
 #ifdef PS2_OPTIMIZATION_VALIDATION
-        const int ps2ValidationLightingQueueStart = (int)lightingToUpdate.size();
+        const int ps2ValidationLightingQueueStart = (int)getPendingLightingUpdateCount();
         int ps2ValidationLightingJobs = 0;
         const auto ps2ValidationReportLighting = [&](bool countExit, bool budgetExit)
         {
@@ -4478,9 +4583,25 @@ bool World::updatingLighting()
         // drains get a little more time than streaming lighting, but are still
         // bounded; the previous unlimited burst caused tens-of-ms stalls when a
         // short queue contained expensive open-area skylight columns.
-        const long_t requestedLightingBudgetUs = interactiveBurst
+        long_t requestedLightingBudgetUs = interactiveBurst
             ? (long_t)PLATFORM_LIGHTING_INTERACTIVE_BUDGET_US
             : (long_t)PLATFORM_LIGHTING_BUDGET_US;
+#if PLATFORM_LIGHTING_EXTRA_BUDGET_US > 0
+        // A queue longer than one frame's jobs is a backlog (chunks streaming
+        // in), not an edit: let the clock, not the 96-job count, bound it, and
+        // add the time the frame has to spare (Light Updates option; Smooth
+        // leaves this off).
+        if (!interactiveBurst && (int)getPendingLightingUpdateCount() > count)
+        {
+            const uint32_t extraUs = LightingFrameBudget::extraUs((int)Config::getLightingUpdates());
+            if (extraUs > 0 && requestedLightingBudgetUs > 0)
+            {
+                requestedLightingBudgetUs += (long_t)extraUs;
+                if (count < PLATFORM_LIGHTING_EXTRA_JOB_CAP)
+                    count = PLATFORM_LIGHTING_EXTRA_JOB_CAP;
+            }
+        }
+#endif
         const uint64_t budgetStartUs = requestedLightingBudgetUs > 0
             ? PlatformCompat::getMonotonicMicros()
             : 0;
@@ -4514,7 +4635,7 @@ bool World::updatingLighting()
                     const int affectedSubsections = world->lightingDirtyRegions.getFlushedCount();
                     if (affectedSubsections > 0 || elapsedMs >= 0.1)
                     {
-                        printf("[PERF] Skylight floodfill time: %.2f ms (subsecciones afectadas: %d)\n", elapsedMs, affectedSubsections);
+                        MC_LOG_DEBUG("lighting", "skylight floodfill %.2f ms (%d subsections)\n", elapsedMs, affectedSubsections);
                     }
                 }
             }
@@ -4522,6 +4643,33 @@ bool World::updatingLighting()
             DirtyBatchScope &operator=(const DirtyBatchScope &) = delete;
         } dirtyBatchScope(this);
 
+        // Reported to the client profiler when the drain ends, on any exit.
+        struct DrainStats
+        {
+            World *world;
+            uint32_t jobs = 0;
+            uint64_t startUs;
+            uint32_t budgetUs;
+            DrainStats(World *w, uint32_t b) : world(w), startUs(PlatformCompat::getMonotonicMicros()), budgetUs(b) {}
+            ~DrainStats()
+            {
+                LightingFrameBudget::recordDrain(jobs,
+                    (uint32_t)(PlatformCompat::getMonotonicMicros() - startUs), budgetUs,
+                    (uint32_t)world->getPendingLightingUpdateCount());
+            }
+        } drainStats(this, (uint32_t)requestedLightingBudgetUs);
+
+#if PLATFORM_LIGHTING_SECTION_QUEUE
+        {
+            // Counted in cells, not jobs: with a clock the clock is the bound
+            // (one old job could be a 4096-cell box), without one `count` cells.
+            const std::uint32_t maxCells = budgetUs > 0 ? 0xffffffffu : (std::uint32_t)std::max(count - 1, 0);
+            dirtyBatchScope.hadSkyLight = !lightingCells.empty();
+            const bool more = drainLightingCells(drainStats.jobs, maxCells, budgetStartUs, budgetUs);
+            lightingUpdatesCounter--;
+            return more;
+        }
+#else
         while (lightingToUpdate.size() > 0)
         {
             if (--count <= 0)
@@ -4548,6 +4696,7 @@ bool World::updatingLighting()
                     metadataChunkBlock.minY, metadataChunkBlock.minZ));
             }
             metadataChunkBlock.updateLight(this);
+            ++drainStats.jobs;
 #ifdef PS2_OPTIMIZATION_VALIDATION
             ++ps2ValidationLightingJobs;
 #endif
@@ -4577,6 +4726,7 @@ bool World::updatingLighting()
 #endif
         lightingUpdatesCounter--;
         return false;
+#endif
     }
     catch (...)
     {
@@ -4587,7 +4737,11 @@ bool World::updatingLighting()
 
 int_t World::getPendingLightingUpdateCount() const
 {
+#if PLATFORM_LIGHTING_SECTION_QUEUE
+    return (int_t)lightingCells.size();
+#else
     return (int_t)lightingToUpdate.size();
+#endif
 }
 
 void World::updateAllLightTypes(int_t x, int_t y, int_t z)
@@ -4638,10 +4792,9 @@ void World::updateLightByType(EnumSkyBlock *type, int_t x, int_t y, int_t z)
     if (type == nullptr)
         return;
 
-#if PLATFORM_CONSOLE_LOW
-    // The low-memory console backend deliberately keeps OptiCraft's deferred and
-    // mergeable lighting scheduler.  It preserves the result while avoiding the
-    // synchronous 32K-entry flood fill on the gameplay thread.
+#if PLATFORM_DEFERRED_LIGHT_UPDATES
+    // OptiCraft's deferred and mergeable lighting scheduler: same result, but
+    // no synchronous 32K-entry flood fill on the gameplay thread.
     scheduleLightingUpdate(type, x, y, z, x, y, z);
     return;
 #else
@@ -4812,7 +4965,22 @@ void World::scheduleLightingUpdate_do(EnumSkyBlock* enumSkyBlock, int minX, int 
         {
             return;
         }
-        
+
+#if PLATFORM_LIGHTING_SECTION_QUEUE
+        // Every cell of the box, as MetadataChunkBlock::updateLight would visit
+        // them (same size limit, same Y clamp); whether a cell's chunks are
+        // loaded is checked when it runs, as it was per job.
+        if ((long_t)(maxX - minX + 1) * (maxY - minY + 1) * (maxZ - minZ + 1) > 32768)
+        {
+            MC_LOG_WARN("chunk", "Light too large, skipping!\n");
+            return;
+        }
+        (void)flag;
+        for (int x = minX; x <= maxX; ++x)
+            for (int z = minZ; z <= maxZ; ++z)
+                for (int y = std::max(minY, 0); y <= std::min(maxY, WorldHeight::MAX_Y); ++y)
+                    queueLightingCell(enumSkyBlock, x, y, z);
+#else
         const int size = (int)lightingToUpdate.size();
 
         // A single cell is the common case (neighbour propagation) and is
@@ -4863,7 +5031,367 @@ void World::scheduleLightingUpdate_do(EnumSkyBlock* enumSkyBlock, int minX, int 
             lightingToUpdate.clear();
             lightingQueuedCells.clear();
         }
+#endif
 }
+
+void World::scheduleLightingCellInChunk(EnumSkyBlock *enumSkyBlock, int_t x, int_t y, int_t z, Chunk *chunk)
+{
+    // Single-cell path of scheduleLightingUpdate_do, in the same order, for a
+    // chunk the caller just resolved through blockExists + getChunkFromChunkCoords
+    // (so the exists probe, the mid-point chunk lookup and the recursion counter,
+    // which is always 1 here, would only repeat that work).
+#if PLATFORM_CONSOLE_LOW
+#if PLATFORM_FORCE_FULLBRIGHT_TERRAIN
+    (void)enumSkyBlock; (void)x; (void)y; (void)z; (void)chunk;
+    return;
+#endif
+#endif
+    if (worldProvider->hasNoSky && enumSkyBlock == EnumSkyBlock::Sky)
+        return;
+    if (batchPopulationLightingUpdate(enumSkyBlock, x, y, z, x, y, z))
+        return;
+    if (chunk->isEmptyChunk())
+        return;
+#if PLATFORM_LIGHTING_SECTION_QUEUE
+    if (y >= 0 && y < WorldHeight::HEIGHT)
+        queueLightingCell(enumSkyBlock, x, y, z);
+#else
+    if ((int)lightingToUpdate.size() >= PLATFORM_LIGHTING_QUEUE_HARD_CAP)
+        return;
+    if (!lightingQueuedCells.insert(LightingQueueCellSet::key(enumSkyBlock, x, y, z)))
+        return;
+    lightingToUpdate.emplace_back(enumSkyBlock, x, y, z, x, y, z);
+    if (lightingToUpdate.size() > 1000000)
+    {
+        lightingToUpdate.clear();
+        lightingQueuedCells.clear();
+    }
+#endif
+}
+
+#if PLATFORM_LIGHTING_SECTION_QUEUE
+void World::queueLightingCell(EnumSkyBlock *type, int_t x, int_t y, int_t z)
+{
+    std::lock_guard<std::mutex> lock(lightingQueueMutex);
+    lightingCells.insert(type == EnumSkyBlock::Sky ? 0 : 1, x, y, z);
+}
+
+namespace
+{
+// relaxLightCell's view of one queued section: the 3x3 chunks around it are
+// resolved once, where MetadataChunkBlock looked a chunk up through the
+// provider hash whenever a read crossed a chunk border (twice per border cell).
+struct SectionLightView
+{
+    World *world;
+    LightingSectionQueue *queue;
+    EnumSkyBlock *type;
+    int_t typeIndex;
+    int_t defaultLight;
+    bool queueable;   // false for sky light in a world without sky
+    int_t originX;
+    int_t originZ;
+    Chunk *chunks[9]; // readable chunks, [(dz + 1) * 3 + dx + 1]
+    bool runs[9];     // may a cell run, by x and z class (low edge, inside, high edge)
+
+    World::AsyncLighting *async = nullptr;
+
+    SectionLightView(World *w, LightingSectionQueue *q, const LightingSectionQueue::Section &section,
+                     World::AsyncLighting *asyncIn = nullptr)
+        : world(w), queue(q), async(asyncIn),
+          type(section.type == 0 ? EnumSkyBlock::Sky : EnumSkyBlock::Block),
+          typeIndex(section.type),
+          defaultLight(type->defaultLightValue),
+          queueable(!(section.type == 0 && w->worldProvider->hasNoSky)),
+          originX(section.chunkX * 16), originZ(section.chunkZ * 16)
+    {
+        // A job ran only if doChunksNearChunkExist(x, 0, z, 1) held and its own
+        // chunk was not empty; reads used blockExists plus the world border.
+        bool loaded[9];
+        for (int_t dz = -1; dz <= 1; ++dz)
+            for (int_t dx = -1; dx <= 1; ++dx)
+            {
+                const int_t cx = section.chunkX + dx;
+                const int_t cz = section.chunkZ + dz;
+                const int_t slot = (dz + 1) * 3 + dx + 1;
+                const bool inBorder = cx >= -1875000 && cz >= -1875000 && cx < 1875000 && cz < 1875000;
+                if (async != nullptr)
+                {
+                    Chunk *resident = async->find(cx, cz);
+                    loaded[slot] = resident != nullptr;
+                    chunks[slot] = inBorder ? resident : nullptr;
+                    continue;
+                }
+                loaded[slot] = w->chunkExists(cx, cz);
+                chunks[slot] = loaded[slot] && inBorder ? w->getChunkFromChunkCoords(cx, cz) : nullptr;
+            }
+        Chunk *centreChunk = async != nullptr ? async->find(section.chunkX, section.chunkZ)
+            : (loaded[4] ? w->getChunkFromChunkCoords(section.chunkX, section.chunkZ) : nullptr);
+        const bool centre = loaded[4] && centreChunk != nullptr && !centreChunk->isEmptyChunk();
+        for (int_t ez = 0; ez < 3; ++ez)
+            for (int_t ex = 0; ex < 3; ++ex)
+            {
+                bool ok = centre;
+                for (int_t dz = ez == 0 ? -1 : 0; dz <= (ez == 2 ? 1 : 0); ++dz)
+                    for (int_t dx = ex == 0 ? -1 : 0; dx <= (ex == 2 ? 1 : 0); ++dx)
+                        ok = ok && loaded[(dz + 1) * 3 + dx + 1];
+                runs[ez * 3 + ex] = ok;
+            }
+    }
+
+    bool cellRuns(int_t lx, int_t lz) const
+    {
+        const int_t ex = lx == 0 ? 0 : (lx == 15 ? 2 : 1);
+        const int_t ez = lz == 0 ? 0 : (lz == 15 ? 2 : 1);
+        return runs[ez * 3 + ex];
+    }
+    Chunk *chunkAt(int_t x, int_t z) const
+    {
+        return chunks[((z - originZ) >> 4) * 3 + ((x - originX) >> 4) + 4];
+    }
+    ExtendedBlockStorage *sectionAt(int_t x, int_t y, int_t z) const
+    {
+        Chunk *chunk = chunkAt(x, z);
+        return chunk != nullptr ? chunk->getBlockStorageArray()[y >> 4] : nullptr;
+    }
+    int_t blockId(int_t x, int_t y, int_t z) const
+    {
+        if (y < 0 || y >= WorldHeight::HEIGHT)
+            return 0;
+        const ExtendedBlockStorage *storage = sectionAt(x, y, z);
+        return storage != nullptr ? storage->getExtBlockID(x & 15, y & 15, z & 15) : 0;
+    }
+
+    int_t light(int_t x, int_t y, int_t z) const
+    {
+        if (y < 0) y = 0;
+        else if (y >= WorldHeight::HEIGHT) y = WorldHeight::MAX_Y;
+        const ExtendedBlockStorage *storage = sectionAt(x, y, z);
+        if (storage == nullptr)
+            return defaultLight;
+        return typeIndex == 0
+            ? storage->getExtSkylightValue(x & 15, y & 15, z & 15)
+            : storage->getExtBlocklightValue(x & 15, y & 15, z & 15);
+    }
+    int_t opacity(int_t x, int_t y, int_t z) const
+    {
+        return Block::lightOpacity[blockId(x, y, z)];
+    }
+    int_t emitted(int_t x, int_t y, int_t z) const
+    {
+        if (typeIndex != 0)
+            return Block::lightValue[blockId(x, y, z)];
+        if (y < 0)
+            return 0;
+        if (y >= WorldHeight::HEIGHT)
+            return 15;
+        Chunk *chunk = chunkAt(x, z);
+        return chunk != nullptr && chunk->canBlockSeeTheSky(x & 15, y, z & 15) ? 15 : 0;
+    }
+    void set(int_t x, int_t y, int_t z, int_t value) const
+    {
+        Chunk *chunk = chunkAt(x, z);
+        if (chunk == nullptr)
+            return;
+        if (async != nullptr)
+        {
+            ExtendedBlockStorage *storage = chunk->getBlockStorageArray()[y >> 4];
+            if (storage == nullptr)
+            {
+                // Allocating it regenerates the chunk's skylight map, which
+                // marks render sections: the game thread does it after the drain.
+                async->deferred.push_back({typeIndex, x, y, z, value});
+                return;
+            }
+            chunk->isModified = true;
+            if (typeIndex == 0)
+            {
+                if (!world->worldProvider->hasNoSky)
+                    storage->setExtSkylightValue(x & 15, y & 15, z & 15, value);
+            }
+            else
+            {
+                storage->setExtBlocklightValue(x & 15, y & 15, z & 15, value);
+            }
+            async->dirty.push_back({x, y, z});
+            return;
+        }
+        chunk->setLightValue(type, x & 15, y, z & 15, value);
+        world->func_48464_p(x, y, z);
+    }
+    void schedule(int_t x, int_t y, int_t z) const
+    {
+        Chunk *chunk = chunkAt(x, z);
+        if (queueable && chunk != nullptr && !chunk->isEmptyChunk())
+            queue->insert(typeIndex, x, y, z);
+    }
+};
+}
+
+bool World::drainLightingCells(std::uint32_t &cellsRun, std::uint32_t maxCells,
+                               std::uint64_t startUs, std::uint64_t budgetUs)
+{
+    const std::uint32_t firstCell = cellsRun;
+    std::uint32_t changed = 0;
+    bool stop = cellsRun >= maxCells;
+    while (!stop && !lightingCells.empty())
+    {
+        // The most recently touched section, drained until it has no cells left
+        // (its changes queue cells in it and in its neighbours as they go).
+        const int_t index = lightingCells.front();
+        const LightingSectionQueue::Section &section = lightingCells.at(index);
+        const SectionLightView view(this, &lightingCells, section);
+        const int_t baseY = section.sectionY * 16;
+        for (int_t cell = lightingCells.take(index, 0); cell >= 0; cell = lightingCells.take(index, cell))
+        {
+            const int_t lx = cell & 15;
+            const int_t lz = cell >> 4 & 15;
+            if (view.cellRuns(lx, lz) &&
+                relaxLightCell(view, view.originX + lx, baseY + (cell >> 8), view.originZ + lz))
+                ++changed;
+            ++cellsRun;
+            // The clock every 16 cells: one cell is well under a microsecond's
+            // work of the clock read itself.
+            if (cellsRun >= maxCells ||
+                (budgetUs > 0 && (cellsRun & 15) == 0 &&
+                 PlatformCompat::getMonotonicMicros() - startUs >= budgetUs))
+            {
+                stop = true;
+                break;
+            }
+        }
+        lightingCells.releaseIfEmpty(index);
+    }
+#if PLATFORM_PROFILE_RENDER_PHASES
+    platformProfileTickPhase("#lightRun", (long long)(cellsRun - firstCell));
+    platformProfileTickPhase("#lightSet", (long long)changed);
+    platformProfileTickPhase("#lightDup", (long long)lightingCells.takeDuplicateCount());
+#else
+    (void)firstCell;
+    (void)changed;
+#endif
+    return !lightingCells.empty();
+}
+
+void World::AsyncLighting::drain()
+{
+    while (!stop.load(std::memory_order_relaxed))
+    {
+        std::lock_guard<std::mutex> queueLock(world->lightingQueueMutex);
+        LightingSectionQueue &queue = world->lightingCells;
+        if (queue.empty())
+            return;
+        const int_t index = queue.front();
+        const SectionLightView view(world, &queue, queue.at(index), this);
+        const int_t baseY = queue.at(index).sectionY * 16;
+        bool interrupted = false;
+        for (int_t cell = queue.take(index, 0); cell >= 0; cell = queue.take(index, cell))
+        {
+            const int_t lx = cell & 15;
+            const int_t lz = cell >> 4 & 15;
+            if (view.cellRuns(lx, lz) &&
+                relaxLightCell(view, view.originX + lx, baseY + (cell >> 8), view.originZ + lz))
+                ++changed;
+            ++cellsRun;
+            if ((cellsRun & 63) == 0 && stop.load(std::memory_order_relaxed))
+            {
+                interrupted = true;
+                break;
+            }
+        }
+        queue.releaseIfEmpty(index);
+        if (interrupted)
+            return;
+    }
+}
+
+void World::beginAsyncLighting()
+{
+    if (multiplayerWorld || chunkProvider == nullptr || lightingCells.empty())
+        return;
+    if (!asyncLighting)
+    {
+        asyncLighting.reset(new AsyncLighting(this));
+        AsyncLighting *worker = asyncLighting.get();
+        try
+        {
+            worker->thread = std::thread([worker] { worker->loop(); });
+        }
+        catch (...)
+        {
+            asyncLighting.reset();
+            return;
+        }
+    }
+    AsyncLighting &worker = *asyncLighting;
+    const std::uint32_t version = chunkProvider->getChunkTopologyVersion();
+    if (!worker.chunksValid || worker.chunksVersion != version)
+    {
+        worker.chunks.clear();
+        for (Chunk *chunk : chunkProvider->getLoadedChunksSnapshot())
+            if (chunk != nullptr)
+                worker.chunks[AsyncLighting::key(chunk->xPosition, chunk->zPosition)] = chunk;
+        worker.chunksVersion = version;
+        worker.chunksValid = true;
+    }
+    // A provider without a resident list: the worker would see no chunk and
+    // drop every cell, so this world keeps the synchronous drain.
+    if (worker.chunks.empty())
+        return;
+    worker.stop = false;
+    worker.cellsRun = 0;
+    worker.changed = 0;
+    {
+        std::lock_guard<std::mutex> lock(worker.mutex);
+        worker.running = true;
+    }
+    worker.wake.notify_one();
+}
+
+void World::endAsyncLighting()
+{
+    if (!asyncLighting)
+        return;
+    AsyncLighting &worker = *asyncLighting;
+    {
+        std::unique_lock<std::mutex> lock(worker.mutex);
+        worker.stop = true;
+        worker.done.wait(lock, [&worker] { return !worker.running; });
+    }
+    if (worker.dirty.empty() && worker.deferred.empty())
+        return;
+#if PLATFORM_PROFILE_RENDER_PHASES
+    platformProfileTickPhase("#lightRun", (long long)worker.cellsRun);
+    platformProfileTickPhase("#lightSet", (long long)worker.changed);
+    platformProfileTickPhase("#lightAsync", 1);
+#endif
+    lightingDirtyRegions.begin();
+    for (const std::array<int_t, 3> &cell : worker.dirty)
+        func_48464_p(cell[0], cell[1], cell[2]);
+    for (const AsyncLighting::Deferred &cell : worker.deferred)
+    {
+        if (!chunkExists(cell.x >> 4, cell.z >> 4))
+            continue;
+        EnumSkyBlock *type = cell.type == 0 ? EnumSkyBlock::Sky : EnumSkyBlock::Block;
+        getChunkFromChunkCoords(cell.x >> 4, cell.z >> 4)->setLightValue(type, cell.x & 15, cell.y, cell.z & 15, cell.value);
+        func_48464_p(cell.x, cell.y, cell.z);
+        // Its neighbours were weighed against the old value: run them again
+        // (the queue settles to the same light whatever runs twice).
+        static const int_t offsets[6][3] = {{-1, 0, 0}, {1, 0, 0}, {0, -1, 0}, {0, 1, 0}, {0, 0, -1}, {0, 0, 1}};
+        for (const auto &offset : offsets)
+        {
+            const int_t ny = cell.y + offset[1];
+            if (ny >= 0 && ny < WorldHeight::HEIGHT)
+                queueLightingCell(type, cell.x + offset[0], ny, cell.z + offset[2]);
+        }
+    }
+    worker.dirty.clear();
+    worker.deferred.clear();
+    markingFromLighting = true;
+    lightingDirtyRegions.end(this);
+    markingFromLighting = false;
+}
+#endif
 
 void World::calculateInitialSkylight()
 {
@@ -5141,9 +5669,17 @@ void World::stopPrecipitation()
     clearWeather();
 }
 
+#if PLATFORM_RELIGHT_CHECK_BUDGET_US > 0
+// One deadline for all worlds; only one world ticks at a time here.
+static long_t s_relightCheckDeadlineNs = 0;
+#endif
+
 void World::func_48461_r()
 {
     const int_t range = PLATFORM_RANDOM_TICK_CHUNK_RADIUS;
+#if PLATFORM_RELIGHT_CHECK_BUDGET_US > 0
+    s_relightCheckDeadlineNs = System::nanoTime() + PLATFORM_RELIGHT_CHECK_BUDGET_US * 1000LL;
+#endif
 
 #if PLATFORM_CACHE_RANDOM_TICK_CHUNKS
     bool rebuildChunkSelection = !positionsToUpdateCacheValid;
@@ -5262,6 +5798,16 @@ void World::func_48458_a(int_t chunkOriginX, int_t chunkOriginZ, Chunk *chunk)
         }
     }
 
+#if !PLATFORM_MP_CLIENT_RELIGHT_CHECKS
+    if (multiplayerWorld)
+        return;
+#endif
+#if PLATFORM_RELIGHT_CHECK_BUDGET_US > 0
+    // Chunks past the budget wait; the ones ahead of them in the fixed order
+    // finish their 4096 checks and stop costing anything, so all get done.
+    if (System::nanoTime() > s_relightCheckDeadlineNs)
+        return;
+#endif
     chunk->enqueueRelightChecks();
 }
 

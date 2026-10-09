@@ -730,6 +730,7 @@ void Chunk::relightBlock(int_t i, int_t j, int_t k)
 	{
 		platformProfileTickPhase("#dirtyHeight", 1);
 		worldObj->markBlocksDirtyVertical(i, k, newHeight, oldHeight);
+	}
 	heightMap[columnIndex] = newHeight;
 
 	const int_t worldX = JavaArithmetic::intAdd(JavaArithmetic::intMul(xPosition, 16), i);
@@ -1909,10 +1910,100 @@ void Chunk::resetRelightChecks()
 	queuedLightChecks = 0;
 }
 
+namespace
+{
+// Same value MetadataChunkBlock::updateLight would compute for this cell. A
+// job whose cell already holds it is a no-op, and nearly every relight check
+// is one: queueing them all grew the lighting queue faster than it drains.
+bool relightWouldChange(World *world, EnumSkyBlock *type, int_t x, int_t y, int_t z)
+{
+	if (y < 0 || y >= WorldHeight::HEIGHT)
+		return false;
+	const int_t current = world->getSavedLightValue(type, x, y, z);
+	const int_t blockId = world->getBlockId(x, y, z);
+	int_t opacity = Block::lightOpacity[blockId];
+	if (opacity == 0)
+		opacity = 1;
+	int_t light = type == EnumSkyBlock::Sky
+		? (world->canExistingBlockSeeTheSky(x, y, z) ? 15 : 0)
+		: Block::lightValue[blockId];
+	if (opacity < 15 || light > 0)
+	{
+		int_t best = world->getSavedLightValue(type, x - 1, y, z);
+		best = std::max(best, world->getSavedLightValue(type, x + 1, y, z));
+		best = std::max(best, world->getSavedLightValue(type, x, y - 1, z));
+		best = std::max(best, world->getSavedLightValue(type, x, y + 1, z));
+		best = std::max(best, world->getSavedLightValue(type, x, y, z - 1));
+		best = std::max(best, world->getSavedLightValue(type, x, y, z + 1));
+		light = std::max(light, std::max<int_t>(best - opacity, 0));
+	}
+	return light != current;
+}
+}
+
 void Chunk::enqueueRelightChecks()
 {
 	if (worldObj == nullptr)
 		return;
+	const bool hasSky = worldObj->worldProvider != nullptr && !worldObj->worldProvider->hasNoSky;
+
+	// Cells at local x/z 1..14 read only this chunk: answer them from the
+	// section arrays (the values World's accessors return for this chunk)
+	// instead of a world -> provider -> chunk lookup per read. Cells on the
+	// border, or next to one, keep the world path.
+	const bool local = !isEmptyChunk() && worldObj->getChunkIfExists(xPosition, zPosition) == this;
+	auto blockIdAt = [this](int_t lx, int_t y, int_t lz) -> int_t
+	{
+		if (y < 0 || y >= WorldHeight::HEIGHT)
+			return 0;
+		const ExtendedBlockStorage *section = storageArrays[y >> 4];
+		return section != nullptr ? section->getExtBlockID(lx, y & 15, lz) : 0;
+	};
+	auto savedLightAt = [this](EnumSkyBlock *type, int_t lx, int_t y, int_t lz) -> int_t
+	{
+		if (y < 0) y = 0;
+		else if (y >= WorldHeight::HEIGHT) y = WorldHeight::MAX_Y;
+		const ExtendedBlockStorage *section = storageArrays[y >> 4];
+		if (section == nullptr)
+			return type->defaultLightValue;
+		return type == EnumSkyBlock::Sky
+			? section->getExtSkylightValue(lx, y & 15, lz)
+			: section->getExtBlocklightValue(lx, y & 15, lz);
+	};
+	// relightWouldChange() for a cell whose six neighbours are in this chunk.
+	auto wouldChangeLocal = [&](EnumSkyBlock *type, int_t lx, int_t y, int_t lz) -> bool
+	{
+		if (y < 0 || y >= WorldHeight::HEIGHT)
+			return false;
+		const int_t current = savedLightAt(type, lx, y, lz);
+		const int_t blockId = blockIdAt(lx, y, lz);
+		int_t opacity = Block::lightOpacity[blockId];
+		if (opacity == 0)
+			opacity = 1;
+		int_t light = type == EnumSkyBlock::Sky
+			? (canBlockSeeTheSky(lx, y, lz) ? 15 : 0)
+			: Block::lightValue[blockId];
+		if (opacity < 15 || light > 0)
+		{
+			int_t best = savedLightAt(type, lx - 1, y, lz);
+			best = std::max(best, savedLightAt(type, lx + 1, y, lz));
+			best = std::max(best, savedLightAt(type, lx, y - 1, lz));
+			best = std::max(best, savedLightAt(type, lx, y + 1, lz));
+			best = std::max(best, savedLightAt(type, lx, y, lz - 1));
+			best = std::max(best, savedLightAt(type, lx, y, lz + 1));
+			light = std::max(light, std::max<int_t>(best - opacity, 0));
+		}
+		return light != current;
+	};
+	auto relight = [&](EnumSkyBlock *type, int_t lx, int_t y, int_t lz)
+	{
+		const int_t x = JavaArithmetic::intAdd(JavaArithmetic::intShl(xPosition, 4), lx);
+		const int_t z = JavaArithmetic::intAdd(JavaArithmetic::intShl(zPosition, 4), lz);
+		const bool interior = local && lx >= 1 && lx <= 14 && lz >= 1 && lz <= 14;
+		if (interior ? wouldChangeLocal(type, lx, y, lz) : relightWouldChange(worldObj, type, x, y, z))
+			worldObj->scheduleLightingUpdate(type, x, y, z, x, y, z);
+	};
+
 	for (int_t iteration = 0; iteration < 8; ++iteration)
 	{
 		if (queuedLightChecks >= 4096)
@@ -1923,6 +2014,7 @@ void Chunk::enqueueRelightChecks()
 		++queuedLightChecks;
 		const int_t worldX = JavaArithmetic::intAdd(JavaArithmetic::intShl(xPosition, 4), localX);
 		const int_t worldZ = JavaArithmetic::intAdd(JavaArithmetic::intShl(zPosition, 4), localZ);
+		const bool interiorColumn = local && localX >= 1 && localX <= 14 && localZ >= 1 && localZ <= 14;
 
 		for (int_t localY = 0; localY < 16; ++localY)
 		{
@@ -1940,16 +2032,16 @@ void Chunk::enqueueRelightChecks()
 			};
 			for (int n = 0; n < 6; ++n)
 			{
-				const int_t nx = JavaArithmetic::intAdd(worldX, offsets[n][0]);
-				const int_t ny = JavaArithmetic::intAdd(worldY, offsets[n][1]);
-				const int_t nz = JavaArithmetic::intAdd(worldZ, offsets[n][2]);
-				const int_t blockId = worldObj->getBlockId(nx, ny, nz);
+				const int_t blockId = interiorColumn
+					? blockIdAt(localX + offsets[n][0], worldY + offsets[n][1], localZ + offsets[n][2])
+					: worldObj->getBlockId(JavaArithmetic::intAdd(worldX, offsets[n][0]),
+						JavaArithmetic::intAdd(worldY, offsets[n][1]), JavaArithmetic::intAdd(worldZ, offsets[n][2]));
 				if (validBlockId(blockId) && Block::lightValue[blockId] > 0)
-					worldObj->scheduleLightingUpdate(EnumSkyBlock::Block, nx, ny, nz, nx, ny, nz);
+					relight(EnumSkyBlock::Block, localX + offsets[n][0], worldY + offsets[n][1], localZ + offsets[n][2]);
 			}
-			worldObj->scheduleLightingUpdate(EnumSkyBlock::Block, worldX, worldY, worldZ, worldX, worldY, worldZ);
-			if (worldObj->worldProvider != nullptr && !worldObj->worldProvider->hasNoSky)
-				worldObj->scheduleLightingUpdate(EnumSkyBlock::Sky, worldX, worldY, worldZ, worldX, worldY, worldZ);
+			relight(EnumSkyBlock::Block, localX, worldY, localZ);
+			if (hasSky)
+				relight(EnumSkyBlock::Sky, localX, worldY, localZ);
 		}
 	}
 }

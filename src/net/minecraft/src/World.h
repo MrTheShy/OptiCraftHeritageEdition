@@ -1,5 +1,7 @@
 #pragma once
 
+#include <memory>
+#include <mutex>
 #include <vector>
 #include <array>
 #include <cstdint>
@@ -11,6 +13,7 @@
 #include "platform/PlatformTuning.h"
 #include "platform/world/PopulationRegionAccessor.h"
 #include "platform/world/LightingQueueCellSet.h"
+#include "platform/world/LightingSectionQueue.h"
 #include "platform/world/LightingDirtyRegions.h"
 #include "platform/world/ChunkLocalDecorationTarget.h"
 #if PLATFORM_FLOAT_COLLISION_SWEEP
@@ -349,6 +352,10 @@ public:
 	void updateAllLightTypes(int_t x, int_t y, int_t z);
 	void updateLightByType(EnumSkyBlock *type, int_t x, int_t y, int_t z);
 	void scheduleLightingUpdate(EnumSkyBlock *enumskyblock, int_t i, int_t j, int_t k, int_t l, int_t i1, int_t j1);
+	// scheduleLightingUpdate for one cell whose chunk the caller has already
+	// resolved (MetadataChunkBlock's propagation): same checks and queueing,
+	// minus the chunk-exists hash probe and second chunk lookup per neighbour.
+	void scheduleLightingCellInChunk(EnumSkyBlock *type, int_t x, int_t y, int_t z, Chunk *chunk);
 	void scheduleLightingUpdate_do(EnumSkyBlock *enumskyblock, int_t i, int_t j, int_t k, int_t l, int_t i1, int_t j1, bool flag);
 	void calculateInitialSkylight();
 	void setAllowedMobSpawns(bool flag, bool flag1);
@@ -466,10 +473,33 @@ public:
 
 private:
 	std::vector<MetadataChunkBlock> lightingToUpdate;
+#if PLATFORM_LIGHTING_SECTION_QUEUE
+	// Pending light cells; takes the place of lightingToUpdate.
+	LightingSectionQueue lightingCells;
+	void queueLightingCell(EnumSkyBlock *type, int_t x, int_t y, int_t z);
+	// Runs up to maxCells queued cells, stopping early once budgetUs have passed
+	// since startUs (0 = no clock). Returns true while cells remain.
+	bool drainLightingCells(std::uint32_t &cellsRun, std::uint32_t maxCells,
+	                        std::uint64_t startUs, std::uint64_t budgetUs);
+#else
 	// Single-cell jobs currently in lightingToUpdate; see LightingQueueCellSet.
 	LightingQueueCellSet lightingQueuedCells;
+#endif
 	// Render marks accumulated while updatingLighting() drains the queue.
 	LightingDirtyRegions lightingDirtyRegions;
+#if PLATFORM_LIGHTING_SECTION_QUEUE
+	// Guards lightingCells while AsyncLighting drains it on another core.
+	std::mutex lightingQueueMutex;
+public:
+	// Light on a free core (World.cpp): begin hands the queue to a worker while
+	// this thread renders and swaps, end waits for it and applies the render
+	// marks it collected. Neither runs anything in a multiplayer world.
+	struct AsyncLighting;
+	void beginAsyncLighting();
+	void endAsyncLighting();
+private:
+	std::unique_ptr<AsyncLighting> asyncLighting;
+#endif
 
 	static bool isSingleCellLightingJob(const MetadataChunkBlock &job)
 	{

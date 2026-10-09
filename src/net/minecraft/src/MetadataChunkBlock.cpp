@@ -135,7 +135,7 @@ void MetadataChunkBlock::updateLight(World *world)
         }
 
         if (chunk->getSavedLightValue(const_cast<EnumSkyBlock*>(skyBlock), lx & 0xf, ly, lz & 0xf) != lightValue)
-            world->scheduleLightingUpdate(const_cast<EnumSkyBlock*>(skyBlock), lx, ly, lz, lx, ly, lz);
+            world->scheduleLightingCellInChunk(const_cast<EnumSkyBlock*>(skyBlock), lx, ly, lz, chunk);
     };
 #else
     auto fastSavedLight = [&](int_t lx, int_t ly, int_t lz) -> int_t
