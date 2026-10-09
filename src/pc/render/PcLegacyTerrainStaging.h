@@ -29,8 +29,10 @@ struct PcLegacyTerrainStaging
     std::vector<PcLegacyStaticTileEntityCandidate> staticTileEntityCandidates;
 };
 
+// snapshot=false leaves sourceCache/sectionCache empty: a section with no
+// block publishes empty meshes without reading the 18^3 neighbourhood.
 bool pcLegacyTerrainStagingAcquire(WorldRenderer *owner, World *world,
-    int_t x0, int_t y0, int_t z0, int_t x1, int_t y1, int_t z1);
+    int_t x0, int_t y0, int_t z0, int_t x1, int_t y1, int_t z1, bool snapshot = true);
 PcLegacyTerrainStaging *pcLegacyTerrainStagingGet(WorldRenderer *owner);
 void pcLegacyTerrainStagingRelease(WorldRenderer *owner);
 std::size_t pcLegacyTerrainStagingBytes();

@@ -1,3 +1,4 @@
+#include "platform/world/ColumnColorCache.h"
 #include "BlockTallGrass.h"
 #include "BiomeGenBase.h"
 #include "IBlockAccess.h"
@@ -42,23 +43,27 @@ int_t BlockTallGrass::colorMultiplier(IBlockAccess *iblockaccess, int_t i, int_t
 	const int_t metadata = iblockaccess->getBlockMetadata(i, j, k);
 	if (metadata == 0)
 		return 0xffffff;
-	if (!Config::isSmoothBiomes())
-		return iblockaccess->getBiomeGenForCoords(i, k)->getBiomeGrassColor();
-
-	int_t red = 0;
-	int_t green = 0;
-	int_t blue = 0;
-	for (int_t dz = -1; dz <= 1; ++dz)
+	static ColumnColorCache s_tallGrassColors;
+	return s_tallGrassColors.get(iblockaccess->getWorldChunkManager(), Config::isSmoothBiomes(), i, k, [&]() -> int_t
 	{
-		for (int_t dx = -1; dx <= 1; ++dx)
+		if (!Config::isSmoothBiomes())
+			return iblockaccess->getBiomeGenForCoords(i, k)->getBiomeGrassColor();
+	
+		int_t red = 0;
+		int_t green = 0;
+		int_t blue = 0;
+		for (int_t dz = -1; dz <= 1; ++dz)
 		{
-			const int_t color = iblockaccess->getBiomeGenForCoords(i + dx, k + dz)->getBiomeGrassColor();
-			red += color >> 16 & 255;
-			green += color >> 8 & 255;
-			blue += color & 255;
+			for (int_t dx = -1; dx <= 1; ++dx)
+			{
+				const int_t color = iblockaccess->getBiomeGenForCoords(i + dx, k + dz)->getBiomeGrassColor();
+				red += color >> 16 & 255;
+				green += color >> 8 & 255;
+				blue += color & 255;
+			}
 		}
-	}
-	return (red / 9 & 255) << 16 | (green / 9 & 255) << 8 | blue / 9 & 255;
+		return (red / 9 & 255) << 16 | (green / 9 & 255) << 8 | blue / 9 & 255;
+	});
 }
 
 int_t BlockTallGrass::idDropped(int_t i, Random &random)

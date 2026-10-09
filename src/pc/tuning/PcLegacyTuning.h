@@ -58,11 +58,22 @@
 #define PC_LEGACY_SCHEDULER_MAX_STEPS_PER_FRAME 8
 #define PC_LEGACY_SCHEDULER_STEPS_PER_UPDATE_UNIT 4
 #define PC_LEGACY_CHUNK_BUILD_BUDGET_MS 5
+// While single player is paused under a menu (PcLegacyMeshScheduler).
+#define PC_LEGACY_PAUSED_CHUNK_BUILD_BUDGET_MS 20
+#define PC_LEGACY_PAUSED_MAX_STEPS_PER_FRAME 64
+// Adaptive mesh budget (Minecraft::run sets g_pcLegacyMeshBudgetUs each frame):
+// what is left of the target after this frame's ticks and the rest of the
+// previous frame's render, within [MIN, MAX]. 0 = the fixed budget above.
+#define PC_LEGACY_MESH_FRAME_TARGET_US 14000
+#define PC_LEGACY_MESH_BUDGET_MIN_US 600
+#define PC_LEGACY_MESH_BUDGET_MAX_US 8000
 
 #define PC_LEGACY_CHUNK_BUILD_BLOCKS_PER_STEP 1024
 #define PC_LEGACY_CHUNK_BUILD_STEP_US 2500
 #define PC_LEGACY_COALESCE_MESH_REBUILDS 1
 #define PC_LEGACY_DEFER_MESH_DURING_POPULATE 1
+// Frames one mesh-candidate selection is reused for (PcLegacyMeshScheduler).
+#define PC_LEGACY_MESH_RESCAN_FRAMES 4
 #define PC_LEGACY_POPULATE_MESH_DEFER_DISTANCE_SQ 1024.0f
 
 #define PC_LEGACY_LIGHTING_UPDATES_PER_FRAME 96

@@ -24,6 +24,11 @@ public:
 
 	int_t getBlockId(int_t i, int_t j, int_t k) override;
 	bool hasResidentChunkAtBlock(int_t i, int_t k) const;
+	// A time-sliced mesh build keeps this cache across frames, while the network
+	// can replace or unload a chunk in between. False when a cell no longer
+	// matches the world (the cache must be dropped); otherwise section bases
+	// are re-read so a section created or freed meanwhile is seen.
+	bool refreshResidentChunks();
 #if PLATFORM_PC_LEGACY || defined(PS2_PLATFORM)
 	const ExtendedBlockStorage *getResidentBlockStorageAt(int_t i, int_t j, int_t k) const;
 #endif

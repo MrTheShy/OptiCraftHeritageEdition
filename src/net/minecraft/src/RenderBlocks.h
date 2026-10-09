@@ -29,6 +29,11 @@ public:
 	bool renderSimpleOpaqueCubeLegacy(Block *block, int_t i, int_t j, int_t k, unsigned char faceMask);
 	bool renderSimpleOpaqueCubeWithColorMultiplierLegacy(Block *block, int_t i, int_t j, int_t k, unsigned char faceMask, int_t metadata, float red, float green, float blue, bool usePackedWhiteFaceState);
 	void setPcLegacyCompactTerrainMesh(RenderCapturedMesh *mesh, int_t originX, int_t originY, int_t originZ);
+	// Game thread, between mesh steps (the tessellator idle): captures the
+	// Natural Textures UV table once and refreshes the per-tile modes. Returns
+	// the modes when compact faces can carry Natural Textures, else nullptr
+	// (option off, or the capture failed: those builds keep the full path).
+	static const std::uint8_t *pcLegacyPrepareNaturalTextures();
 #endif
 #ifdef PS2_PLATFORM
 	bool renderSimpleOpaqueCubePs2(Block *block, int_t i, int_t j, int_t k, unsigned char faceMask);

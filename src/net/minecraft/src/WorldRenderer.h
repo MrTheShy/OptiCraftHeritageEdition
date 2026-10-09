@@ -70,6 +70,24 @@ public:
 	// Set by RenderGlobal for a block change next to the player; the scheduler
 	// runs these ahead of streaming work and to completion.
 	bool urgentRebuild = false;
+#if PLATFORM_PC_LEGACY
+	// Player edit (PC_LEGACY scheduler). The sections one edit dirties are
+	// rebuilt one at a time; publishing them in the wrong order shows a hole
+	// for a few frames at a section border (block gone, the neighbour's newly
+	// exposed face not built yet). 1 = publish first, 2 = after the 1s, 0 = no
+	// edit pending. See RenderGlobal::markRenderersInRange.
+	std::uint8_t pcLegacyEditOrder = 0;
+	// Drops a build in progress (the renderer stays dirty) so a player edit
+	// can take the single staging slot at once.
+	void pcLegacyAbandonBuild() { pcLegacyResetBuildState(); }
+	// Scheduler memo of World::isChunkPopulationPendingForRendering for this
+	// renderer's column: valid while g_chunkPopulationPendingRevision and the
+	// column are unchanged (0: never computed).
+	std::uint32_t pcLegacyPopulateMemoRevision = 0;
+	int_t pcLegacyPopulateMemoX = 0;
+	int_t pcLegacyPopulateMemoZ = 0;
+	bool pcLegacyPopulateMemoPending = false;
+#endif
 #if PLATFORM_PS2 && MC_LOG_LEVEL >= 2
 	// Monotonic microseconds at the edit that set urgentRebuild; the urgent lane
 	// logs the edit-to-publish latency against it.
@@ -359,6 +377,17 @@ private:
 	bool pcLegacyStepDidWork;
 	bool pcLegacyBuildDirtyDuringBuild;
 	std::uint8_t pcLegacyPublishedVisibility[6];
+	// PLATFORM_MESH_WORKER (declared on every PC_LEGACY build so the layout
+	// does not depend on tuning headers). Job of the build in progress, 0 when
+	// the game thread meshes everything.
+	std::uint32_t pcLegacyMeshJob = 0;
+	bool pcLegacyMeshJobAo = false;
+	// The worker's last result for this renderer was unusable: mesh the next
+	// build without it.
+	bool pcLegacyMeshWorkerSkip = false;
+	// Section index of the last block left to the worker whose tessellator
+	// state has not been replayed yet (-1: none).
+	int_t pcLegacyMeshReplayIndex = -1;
 
 	void pcLegacyResetBuildState();
 	bool pcLegacyBeginBuildState();

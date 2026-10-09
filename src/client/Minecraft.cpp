@@ -36,6 +36,8 @@
 #include "pc/lwjgl/Display.h"
 #include "pc/lwjgl/Keyboard.h"
 #include "pc/lwjgl/Mouse.h"
+#include "pc/render/PcLegacyMeshScheduler.h"
+#include "pc/tuning/PcLegacyTuning.h"
 
 #include "java/File.h"
 #include "java/String.h"
@@ -883,6 +885,11 @@ void Minecraft::shutdownMinecraftApplet()
 
 // ─── Main game loop ──────────────────────────────────────────────────────────
 
+#if PLATFORM_PC_LEGACY
+// Last frame's wait for the GPU (Vita swap), credited to the mesh budget.
+static long_t s_vitaLastSwapUs = 0;
+#endif
+
 void Minecraft::run()
 {
     running = true;
@@ -1011,9 +1018,30 @@ void Minecraft::run()
                     if (validateHeapThisFrame)
                         validateProcessHeap("before world render");
 
+#if PLATFORM_PC_LEGACY
+                    // Mesh budget for this frame: what is left of the target
+                    // after this frame's ticks and the rest of the previous
+                    // frame's render. A frame running a world tick builds
+                    // little, a light one builds more (PcLegacyMeshScheduler).
+                    static long_t meshRenderOtherUs = 8000;
+                    {
+                        // Time the CPU spent waiting for the GPU last frame is
+                        // free: a GPU-bound view (a forest, 46 ms of wait) left
+                        // the minimum budget and ~1 section a second got built,
+                        // so the player walked into unbuilt, black sections.
+                        const long_t leftUs = PC_LEGACY_MESH_FRAME_TARGET_US - l2 / 1000 - meshRenderOtherUs + s_vitaLastSwapUs;
+                        g_pcLegacyMeshBudgetUs = static_cast<int>(std::max<long_t>(PC_LEGACY_MESH_BUDGET_MIN_US,
+                            std::min<long_t>(PC_LEGACY_MESH_BUDGET_MAX_US, leftUs)));
+                        g_pcLegacyMeshSpentUs = 0;
+                    }
+#endif
                     const long_t clientRenderStartNs = System::nanoTime();
                     entityRenderer->updateCameraAndRender(timer->renderPartialTicks);
                     clientRenderNs = System::nanoTime() - clientRenderStartNs;
+#if PLATFORM_PC_LEGACY
+                    meshRenderOtherUs = std::max<long_t>(0, clientRenderNs / 1000 - static_cast<long_t>(g_pcLegacyMeshSpentUs));
+                    platformProfileTickPhase("meshBudget", static_cast<long long>(g_pcLegacyMeshBudgetUs) * 1000LL);
+#endif
                     ClientProfiler::render(clientRenderNs);
 
                     if (validateHeapThisFrame)

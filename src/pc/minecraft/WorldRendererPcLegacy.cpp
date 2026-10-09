@@ -17,6 +17,8 @@
 #include "net/minecraft/src/Tessellator.h"
 #include "net/minecraft/src/TileEntity.h"
 #include "net/minecraft/src/TileEntityRenderer.h"
+#include "pc/render/PcLegacyMeshScheduler.h"
+#include "pc/tuning/PcLegacyTuning.h"
 #include "net/minecraft/src/OpenGlHelper.h"
 #include "net/minecraft/src/World.h"
 #include "pc/render/PcLegacyTerrainStaging.h"
@@ -27,6 +29,17 @@
 #include "platform/PlatformTuning.h"
 #include "pc/tuning/PcLegacyTuning.h"
 #include "platform/RenderAPI.h"
+#include "platform/Profiler.h"
+#if PLATFORM_MESH_WORKER
+#include "client/Minecraft.h"
+#include "net/minecraft/src/CustomColorizer.h"
+#include "pc/render/PcLegacyCubeMaterialInfo.h"
+#include "pc/render/PcLegacyMeshWorker.h"
+#endif
+#if PLATFORM_MESH_WORKER_VERIFY
+#include <cstring>
+#include "platform/Log.h"
+#endif
 
 namespace
 {
@@ -53,9 +66,14 @@ namespace
     {
         if (PLATFORM_CHUNK_BUILD_STEP_US <= 0)
             return false;
+        // A step never outlasts this frame's adaptive mesh budget either
+        // (a frame with a world tick gets little; see PcLegacyMeshScheduler).
+        std::uint64_t limitUs = static_cast<std::uint64_t>(PLATFORM_CHUNK_BUILD_STEP_US);
+        if (g_pcLegacyMeshBudgetUs > 0)
+            limitUs = std::min<std::uint64_t>(limitUs,
+                static_cast<std::uint64_t>(std::max(g_pcLegacyMeshBudgetUs, PC_LEGACY_MESH_BUDGET_MIN_US)));
         const std::uint64_t nowUs = PlatformCompat::getMonotonicMicros();
-        return nowUs > stepStartUs &&
-            nowUs - stepStartUs >= static_cast<std::uint64_t>(PLATFORM_CHUNK_BUILD_STEP_US);
+        return nowUs > stepStartUs && nowUs - stepStartUs >= limitUs;
     }
 
     bool pcLegacyCentralSectionIsEmpty(World *world, int_t x, int_t y, int_t z)
@@ -75,6 +93,69 @@ namespace
         const ExtendedBlockStorage *storage = chunk->getBlockStorage(JavaArithmetic::intShr(y, 4));
         return storage == nullptr || storage->getIsEmpty();
     }
+
+#if PLATFORM_MESH_WORKER_VERIFY
+    // The worker's part of the section as the game thread meshes it, taken at
+    // the same moment as the job's snapshot.
+    RenderCapturedMesh g_meshVerifyReference;
+    bool g_meshVerifyLeaked = false;
+
+    void pcLegacyMeshVerifyBuildReference(PcLegacySectionCache &cache, int_t x0, int_t y0, int_t z0, bool ao)
+    {
+        g_meshVerifyReference.clear();
+        Tessellator &tessellator = Tessellator::instance;
+        RenderBlocks renderblocks(&cache);
+        renderblocks.setPcLegacyCompactTerrainMesh(&g_meshVerifyReference, x0, y0, z0);
+        tessellator.startDrawingQuads();
+        tessellator.setTranslationD(-static_cast<double>(x0), -static_cast<double>(y0), -static_cast<double>(z0));
+        const int_t workCount = cache.getRenderWorkCount(0);
+        for (int_t i = 0; i < workCount; ++i)
+        {
+            const int_t cursor = cache.getRenderWorkEntry(0, i);
+            const int_t lx = cursor & 15;
+            const int_t lz = (cursor >> 4) & 15;
+            const int_t ly = (cursor >> 8) & 15;
+            const int_t id = cache.getBlockIdLocal(lx, ly, lz);
+            if (id <= 0 || id >= Block::BLOCK_REGISTRY_SIZE || Block::blocksList[id] == nullptr)
+                continue;
+            const PcLegacyBlockRenderInfo &info = pcLegacyGetBlockRenderInfo(id);
+            const std::uint8_t faceMask = cache.getExposedFaceMaskLocal(lx, ly, lz);
+            if (info.renderPass != 0 || faceMask == 0 ||
+                !pcLegacyMeshWorkerOwnsBlock(info, id, cache.getBlockMetadata(x0 + lx, y0 + ly, z0 + lz), ao))
+                continue;
+            renderblocks.renderSimpleOpaqueCubeLegacy(Block::blocksList[id], x0 + lx, y0 + ly, z0 + lz, faceMask);
+        }
+        // Anything in the tessellator means a block the worker owns does not
+        // take the compact path on the game thread.
+        g_meshVerifyLeaked = tessellator.hasPendingVertices();
+        tessellator.cancelDrawing();
+        tessellator.setTranslationD(0.0, 0.0, 0.0);
+    }
+
+    // True when the worker mesh matches; otherwise logs and puts the game
+    // thread's mesh in its place.
+    bool pcLegacyMeshVerifyCompare(RenderCapturedMesh &workerMesh, int_t x0, int_t y0, int_t z0)
+    {
+        const RenderCapturedMesh &ref = g_meshVerifyReference;
+        const bool same = !g_meshVerifyLeaked && workerMesh.vertexCount == ref.vertexCount &&
+            workerMesh.raw.size() == ref.raw.size() && workerMesh.stride == ref.stride &&
+            workerMesh.positionShort == ref.positionShort && workerMesh.hasColor == ref.hasColor &&
+            workerMesh.hasBrightness == ref.hasBrightness && workerMesh.hasTexture == ref.hasTexture &&
+            (ref.raw.empty() || std::memcmp(workerMesh.raw.data(), ref.raw.data(),
+                ref.raw.size() * sizeof(std::int32_t)) == 0);
+        if (same)
+            return true;
+        std::size_t firstDiff = 0;
+        while (firstDiff < workerMesh.raw.size() && firstDiff < ref.raw.size() &&
+               workerMesh.raw[firstDiff] == ref.raw[firstDiff])
+            ++firstDiff;
+        MC_LOG_ERROR("mesh", "worker mesh differs at section %d,%d,%d: verts %d/%d ints %d/%d first diff int %d leaked=%d\n",
+            (int)x0, (int)y0, (int)z0, workerMesh.vertexCount, ref.vertexCount,
+            (int)workerMesh.raw.size(), (int)ref.raw.size(), (int)firstDiff, g_meshVerifyLeaked ? 1 : 0);
+        workerMesh = ref;
+        return false;
+    }
+#endif
 }
 
 void WorldRenderer::updateRenderer()
@@ -92,6 +173,11 @@ void WorldRenderer::updateRenderer()
 
 void WorldRenderer::pcLegacyResetBuildState()
 {
+#if PLATFORM_MESH_WORKER
+    pcLegacyMeshWorkerCancel(pcLegacyMeshJob);
+#endif
+    pcLegacyMeshJob = 0;
+    pcLegacyMeshReplayIndex = -1;
     pcLegacyTerrainStagingRelease(this);
     pcLegacyBuildActive = false;
     pcLegacyBuildSourceAvailability = 0u;
@@ -113,11 +199,42 @@ bool WorldRenderer::pcLegacyBeginBuildState()
     const int_t x1 = posX + sizeWidth;
     const int_t y1 = posY + sizeHeight;
     const int_t z1 = posZ + sizeDepth;
-    if (!pcLegacyTerrainStagingAcquire(this, worldObj, posX, posY, posZ, x1, y1, z1))
-        return false;
+    {
+        PlatformTickPhaseScope acquirePhase("meshAcquire");
+        if (!pcLegacyTerrainStagingAcquire(this, worldObj, posX, posY, posZ, x1, y1, z1))
+            return false;
+    }
 
     pcLegacyBuildActive = true;
     isVisibleFromPosition = false;
+    // Also the modes this thread's compact faces use for the whole build.
+    const std::uint8_t *naturalModes = RenderBlocks::pcLegacyPrepareNaturalTextures();
+    (void)naturalModes;
+
+#if PLATFORM_MESH_WORKER
+    const bool skipWorker = pcLegacyMeshWorkerSkip;
+    pcLegacyMeshWorkerSkip = false;
+    PcLegacyTerrainStaging *staging = pcLegacyTerrainStagingGet(this);
+    // The worker only produces compact-emitter faces; with connected/natural
+    // textures or block palettes none are, so the section stays here.
+    if (!skipWorker && PLATFORM_COMPACT_TERRAIN_VERTICES && staging != nullptr &&
+        staging->sectionCache.has_value() && staging->sourceCache.has_value() &&
+        !ConnectedTextures::isActive() && (!Config::isNaturalTextures() || naturalModes != nullptr) &&
+        !CustomColorizer::anyBlockPalette())
+    {
+        PlatformTickPhaseScope phase("meshSnap");
+        pcLegacyMeshJobAo = Minecraft::isAmbientOcclusionEnabled();
+        pcLegacyMeshJob = pcLegacyMeshWorkerSubmit(*staging->sectionCache, *staging->sourceCache,
+            posX, posY, posZ, pcLegacyMeshJobAo, naturalModes);
+#if PLATFORM_PROFILE_RENDER_PHASES
+        platformProfileTickPhase(pcLegacyMeshJob != 0 ? "#meshJobs" : "#meshNoJob", 1);
+#endif
+#if PLATFORM_MESH_WORKER_VERIFY
+        if (pcLegacyMeshJob != 0)
+            pcLegacyMeshVerifyBuildReference(*staging->sectionCache, posX, posY, posZ, pcLegacyMeshJobAo);
+#endif
+    }
+#endif
     return true;
 }
 
@@ -271,15 +388,20 @@ void WorldRenderer::pcLegacyPublishBuild(PcLegacyTerrainStaging &staging)
 #endif
 
     tileEntityRenderers = rebuiltTileEntityRenderers;
-    if (staging.sectionCache.has_value())
+    // No snapshot: the section had no block, which the visibility build
+    // reports as every face seeing every other.
+    for (int_t face = 0; face < 6; ++face)
     {
-        for (int_t face = 0; face < 6; ++face)
-            pcLegacyPublishedVisibility[face] = staging.sectionCache->getVisibleFacesFrom(face);
+        pcLegacyPublishedVisibility[face] = staging.sectionCache.has_value()
+            ? staging.sectionCache->getVisibleFacesFrom(face)
+            : PcLegacySectionVisibility::kAllFaces;
     }
     isChunkLit = pcLegacyBuildChunkLit;
     isInitialized = true;
     const bool dirtyDuringBuild = pcLegacyBuildDirtyDuringBuild;
     needsUpdate = dirtyDuringBuild;
+    pcLegacyEditOrder = 0;
+    pcLegacyBuiltFarLeaves = pcLegacyBuildFarLeaves;
     ++chunksUpdated;
 
     pcLegacyResetBuildState();
@@ -340,7 +462,31 @@ bool WorldRenderer::pcLegacyBuildRendererStep(int_t blockBudget)
         }
     }
     if (requestedDependencies > 0)
+    {
+#if PLATFORM_PROFILE_RENDER_PHASES
+        platformProfileTickPhase("#meshDep", 1);
+#endif
         return false;
+    }
+
+    if (centralSectionEmpty)
+    {
+        // Nothing to mesh (sky above the terrain is most sections of a new
+        // column): the snapshot of 18^3 cells and its 94 KB of tables would
+        // only confirm that. Same published state as a full build of it.
+        pcLegacyResetBuildState();
+        pcLegacyMeshWorkerSkip = false;
+        if (!pcLegacyTerrainStagingAcquire(this, worldObj, x0, y0, z0, x1, y1, z1, false))
+            return false;
+        pcLegacyBuildActive = true;
+        isVisibleFromPosition = false;
+        PcLegacyTerrainStaging *emptyStaging = pcLegacyTerrainStagingGet(this);
+#if PLATFORM_PROFILE_RENDER_PHASES
+        platformProfileTickPhase("#meshEmpty", 1);
+#endif
+        pcLegacyPublishBuild(*emptyStaging);
+        return true;
+    }
 
     if (!pcLegacyBuildActive)
     {
@@ -354,7 +500,8 @@ bool WorldRenderer::pcLegacyBuildRendererStep(int_t blockBudget)
     }
 
     PcLegacyTerrainStaging *staging = pcLegacyTerrainStagingGet(this);
-    if (staging == nullptr || !staging->sectionCache.has_value())
+    if (staging == nullptr || !staging->sectionCache.has_value() ||
+        !staging->sourceCache.has_value() || !staging->sourceCache->refreshResidentChunks())
     {
         pcLegacyResetBuildState();
         return false;
@@ -401,6 +548,7 @@ bool WorldRenderer::pcLegacyBuildRendererStep(int_t blockBudget)
             -static_cast<double>(posY), -static_cast<double>(posZ));
 
         bool stepDrew = false;
+        PlatformTickPhaseScope walkPhase(pcLegacyBuildPass == 0 ? "meshWalk0" : "meshWalk1");
 #if PLATFORM_PROFILE_RENDER_PHASES
         // Walk time by block kind: render types 0-25, other (26), untaken
         // cubes white (27) and tinted (28). One block in 8 is timed and the
@@ -411,6 +559,28 @@ bool WorldRenderer::pcLegacyBuildRendererStep(int_t blockBudget)
             "wRT17", "wRT18", "wRT19", "wRT20", "wRT21", "wRT22", "wRT23", "wRT24", "wRT25", "wRTx",
             "wCubeWhite", "wCubeTint"};
         long long kindUs[29] = {};
+#endif
+#if PLATFORM_MESH_WORKER
+        // A block left to the worker still sets the tessellator state its last
+        // face would have set on this thread; replay it before anything that
+        // could read it, so the game thread's mesh stays the same.
+        auto replayWorkerBlockState = [&]()
+        {
+            if (pcLegacyMeshReplayIndex < 0)
+                return;
+            const int_t rx = pcLegacyMeshReplayIndex & 15;
+            const int_t rz = (pcLegacyMeshReplayIndex >> 4) & 15;
+            const int_t ry = (pcLegacyMeshReplayIndex >> 8) & 15;
+            const std::uint8_t mask = sectionCache.getExposedFaceMaskLocal(rx, ry, rz);
+            int_t side = 5;
+            while (side > 0 && (mask & (1u << side)) == 0)
+                --side;
+            const int_t id = sectionCache.getBlockIdLocal(rx, ry, rz);
+            pcLegacySetVanillaFaceState(*tessellator, side,
+                sectionCache.getFacePackedBrightness(x0 + rx, y0 + ry, z0 + rz, side, Block::lightValue[id]));
+            renderblocks.enableAO = false;
+            pcLegacyMeshReplayIndex = -1;
+        };
 #endif
         while (pcLegacyBuildCursor < workCount && processed < blockBudget)
         {
@@ -477,6 +647,19 @@ bool WorldRenderer::pcLegacyBuildRendererStep(int_t blockBudget)
                 const std::uint8_t faceMask = sectionCache.getExposedFaceMaskLocal(lx, ly, lz);
                 if (faceMask == 0)
                     continue;
+#if PLATFORM_MESH_WORKER
+                if (pcLegacyMeshJob != 0 && pcLegacyBuildPass == 0 &&
+                    pcLegacyMeshWorkerOwnsBlock(blockInfo, id, pcLegacyMeshWorkerMetadata(cursor), pcLegacyMeshJobAo))
+                {
+                    pcLegacyMeshReplayIndex = cursor;
+                    continue;
+                }
+                replayWorkerBlockState();
+#endif
+#if PLATFORM_PROFILE_RENDER_PHASES
+                const bool timed = (processed & 7) == 0;
+                const std::uint64_t cubeStartUs = timed ? PlatformCompat::getMonotonicMicros() : 0;
+#endif
                 stepDrew |= renderblocks.renderSimpleOpaqueCubeLegacy(block, x, y, z, faceMask);
 #if PLATFORM_PROFILE_RENDER_PHASES
                 // Cubes the worker did not take, by colour: white (stone without
@@ -488,6 +671,13 @@ bool WorldRenderer::pcLegacyBuildRendererStep(int_t blockBudget)
             }
             else
             {
+#if PLATFORM_MESH_WORKER
+                replayWorkerBlockState();
+#endif
+#if PLATFORM_PROFILE_RENDER_PHASES
+                const bool timed = (processed & 7) == 0;
+                const std::uint64_t otherStartUs = timed ? PlatformCompat::getMonotonicMicros() : 0;
+#endif
                 stepDrew |= renderblocks.renderBlockByRenderType(block, x, y, z);
 #if PLATFORM_PROFILE_RENDER_PHASES
                 if (timed)
@@ -499,7 +689,16 @@ bool WorldRenderer::pcLegacyBuildRendererStep(int_t blockBudget)
 #endif
             }
         }
+#if PLATFORM_MESH_WORKER
+        replayWorkerBlockState();
+#endif
+#if PLATFORM_PROFILE_RENDER_PHASES
+        for (int kind = 0; kind < 29; ++kind)
+            if (kindUs[kind] > 0)
+                platformProfileTickPhase(kKindNames[kind], kindUs[kind] * 8000LL);
+#endif
 
+        PlatformTickPhaseScope capturePhase("meshCapture");
         const bool textureGroupsCaptureOk = tessellator->captureTextureGroups(
             staging->extraTextureMeshes[pcLegacyBuildPass], true);
         const bool hadBaseVertices = tessellator->hasPendingVertices();
@@ -524,6 +723,47 @@ bool WorldRenderer::pcLegacyBuildRendererStep(int_t blockBudget)
             return false;
     }
 
+#if PLATFORM_MESH_WORKER
+    if (pcLegacyMeshJob != 0)
+    {
+        PlatformTickPhaseScope phase("meshMerge");
+        std::uint32_t workUs = 0;
+        // The worker owns every compact face of pass 0: anything this thread
+        // put there means the two disagreed about a block.
+        const PcLegacyMeshJobState state = staging->compactPassMeshes[0].empty()
+            ? pcLegacyMeshWorkerCollect(pcLegacyMeshJob, staging->compactPassMeshes[0], workUs)
+            : PcLegacyMeshJobState::Lost;
+        if (state == PcLegacyMeshJobState::Pending)
+        {
+#if PLATFORM_PROFILE_RENDER_PHASES
+            platformProfileTickPhase("#meshWait", 1);
+#endif
+            return false;
+        }
+        if (state == PcLegacyMeshJobState::Lost)
+        {
+#if PLATFORM_PROFILE_RENDER_PHASES
+            platformProfileTickPhase("#meshFallback", 1);
+#endif
+            pcLegacyMeshWorkerSkip = true;
+            pcLegacyResetBuildState();
+            return false;
+        }
+        pcLegacyMeshJob = 0;
+#if PLATFORM_PROFILE_RENDER_PHASES
+        platformProfileTickPhase("#meshWorkUs", static_cast<long long>(workUs));
+#endif
+#if PLATFORM_MESH_WORKER_VERIFY
+        const bool verified = pcLegacyMeshVerifyCompare(staging->compactPassMeshes[0], posX, posY, posZ);
+#if PLATFORM_PROFILE_RENDER_PHASES
+        platformProfileTickPhase(verified ? "#meshVerifyOk" : "#meshVerifyBad", 1);
+#endif
+        (void)verified;
+#endif
+    }
+#endif
+
+    PlatformTickPhaseScope phase("meshPublish");
     pcLegacyPublishBuild(*staging);
     return true;
 }

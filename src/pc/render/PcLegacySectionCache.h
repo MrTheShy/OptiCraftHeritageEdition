@@ -13,7 +13,7 @@
 class ChunkCache;
 class World;
 
-class PcLegacySectionCache : public IBlockAccess
+class PcLegacySectionCache final : public IBlockAccess
 {
 public:
     static constexpr int kSize = 18;
@@ -31,6 +31,10 @@ public:
         const int index = ((localY + 1) * kSize + (localZ + 1)) * kSize + (localX + 1);
         return static_cast<int_t>(blockIds[static_cast<std::size_t>(index)]);
     }
+    // Raw 18^3 cell arrays (y, z, x order), fixed after construction.
+    const std::uint16_t *blockIdCells() const { return blockIds.data(); }
+    const std::uint8_t *exposedFaceMaskCells() const { return exposedFaceMask.data(); }
+    const std::uint16_t *renderWorkEntries(int_t pass) const { return renderWorksets[pass != 0 ? 1 : 0].data(); }
     int_t getRenderWorkCount(int_t pass) const;
     std::uint16_t getRenderWorkEntry(int_t pass, int_t index) const;
     bool hasRenderWork() const;
@@ -62,6 +66,7 @@ private:
     void preloadBlockIds();
     void precomputeSectionData();
     int_t getCachedLightValue(int_t x, int_t y, int_t z, int index);
+    int_t loadPackedLight(int_t x, int_t y, int_t z);
 
     ChunkCache *source;
     World *world;
@@ -69,18 +74,20 @@ private:
     int_t minY;
     int_t minZ;
 
+    // Arrays read only below a count or behind a *Valid flag are left
+    // uninitialised: zeroing them was ~56 KB of stores per section build.
     std::array<std::uint16_t, kCellCount> blockIds{};
     std::array<std::uint8_t, kCellCount> exposedFaceMask{};
-    std::array<std::array<std::uint16_t, kSectionBlockCount>, 2> renderWorksets{};
+    std::array<std::array<std::uint16_t, kSectionBlockCount>, 2> renderWorksets;
     std::array<int_t, 2> renderWorkCounts{};
     PcLegacySectionVisibility visibility;
-    std::array<std::uint8_t, kCellCount> metadata{};
+    std::array<std::uint8_t, kCellCount> metadata;
     std::array<std::uint8_t, kCellCount> metadataValid{};
-    std::array<int_t, kCellCount> packedLight{};
+    std::array<int_t, kCellCount> packedLight;
     std::array<std::uint8_t, kCellCount> packedLightValid{};
-    std::array<std::uint8_t, kCellCount> lightValue{};
+    std::array<std::uint8_t, kCellCount> lightValue;
     std::array<std::uint8_t, kCellCount> lightValueValid{};
-    std::array<BiomeGenBase *, kHorizontalCellCount> biomes{};
+    std::array<BiomeGenBase *, kHorizontalCellCount> biomes;
     std::array<std::uint8_t, kHorizontalCellCount> biomeValid{};
 };
 

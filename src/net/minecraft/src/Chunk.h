@@ -84,6 +84,29 @@ public:
 	virtual int_t getBlockMetadata(int_t i, int_t j, int_t k);
 	virtual bool setBlockMetadata(int_t i, int_t j, int_t k, int_t l);
 	std::uint32_t getBlockSectionRevision(int_t sectionY) const;
+	// Box (section-local) around the blocks written since the last take. A
+	// block only shows in the meshes of the renderers whose 18^3 build window
+	// holds it, so population marks this box +-1 (as vanilla marks a single
+	// block) instead of the whole section and its 26 neighbours: most of a
+	// column's veins and trees never reach the section border.
+	struct SectionChangeBox
+	{
+		bool any;
+		std::uint8_t minX, minY, minZ, maxX, maxY, maxZ;
+	};
+	bool takeSectionChangeBox(int_t sectionY, SectionChangeBox &out)
+	{
+		if (sectionY < 0 || sectionY >= SECTION_COUNT || !sectionChangeBoxes[sectionY].any)
+			return false;
+		out = sectionChangeBoxes[sectionY];
+		sectionChangeBoxes[sectionY].any = false;
+		return true;
+	}
+	void clearSectionChangeBoxes()
+	{
+		for (SectionChangeBox &box : sectionChangeBoxes)
+			box.any = false;
+	}
 
 	virtual int_t getSavedLightValue(EnumSkyBlock *enumskyblock, int_t i, int_t j, int_t k);
 	virtual void setLightValue(EnumSkyBlock *enumskyblock, int_t i, int_t j, int_t k, int_t l);
@@ -193,6 +216,31 @@ public:
 	long_t lastSaveTime;
 	long_t lastAccessTick;
 	std::uint32_t blockSectionRevision[SECTION_COUNT];
+	SectionChangeBox sectionChangeBoxes[SECTION_COUNT] = {};
+	// Called with every blockSectionRevision bump; i, k local, j 0..255.
+	void noteSectionBlockChange(int_t i, int_t j, int_t k)
+	{
+		SectionChangeBox &box = sectionChangeBoxes[j >> 4];
+		const std::uint8_t x = static_cast<std::uint8_t>(i);
+		const std::uint8_t y = static_cast<std::uint8_t>(j & 15);
+		const std::uint8_t z = static_cast<std::uint8_t>(k);
+		if (!box.any)
+		{
+			box = {true, x, y, z, x, y, z};
+			return;
+		}
+		if (x < box.minX) box.minX = x;
+		if (x > box.maxX) box.maxX = x;
+		if (y < box.minY) box.minY = y;
+		if (y > box.maxY) box.maxY = y;
+		if (z < box.minZ) box.minZ = z;
+		if (z > box.maxZ) box.maxZ = z;
+	}
+	void noteWholeSectionChange(int_t sectionY)
+	{
+		if (sectionY >= 0 && sectionY < SECTION_COUNT)
+			sectionChangeBoxes[sectionY] = {true, 0, 0, 0, 15, 15, 15};
+	}
 
 private:
 	ExtendedBlockStorage *ensureBlockStorage(int_t sectionY);

@@ -281,6 +281,7 @@ void Chunk::setStorageArrays(ExtendedBlockStorage *const *storage, int_t count)
             delete storageArrays[section];
         storageArrays[section] = incoming[section];
         ++blockSectionRevision[section];
+        noteWholeSectionChange(section);
     }
 }
 
@@ -310,6 +311,7 @@ void Chunk::clearBlockStorage(int_t sectionY)
 	delete storageArrays[sectionY];
 	storageArrays[sectionY] = nullptr;
 	++blockSectionRevision[sectionY];
+	noteWholeSectionChange(sectionY);
 }
 
 bool Chunk::isValidLocalPosition(int_t x, int_t y, int_t z) const
@@ -914,6 +916,7 @@ bool Chunk::setBlockIDWithMetadata(int_t i, int_t j, int_t k, int_t l, int_t i1)
 	}
 
 	++blockSectionRevision[j >> 4];
+	noteSectionBlockChange(i, j, k);
 	isModified = true;
 	if (l == 0 && section != nullptr && section->getIsEmpty())
 	{
@@ -969,6 +972,7 @@ bool Chunk::setVegetationBlockIDWithMetadataForPopulation(int_t i, int_t j, int_
 		skylightRegenPending = true;
 	}
 	++blockSectionRevision[j >> 4];
+	noteSectionBlockChange(i, j, k);
 	isModified = true;
 	return true;
 }
@@ -1004,6 +1008,7 @@ bool Chunk::replaceBlockIDForPopulation(int_t i, int_t j, int_t k,
 	section->setExtBlockID(i, j & 15, k, newId);
 	section->setExtBlockMetadata(i, j & 15, k, 0);
 	++blockSectionRevision[j >> 4];
+	noteSectionBlockChange(i, j, k);
 	isModified = true;
 	return true;
 }
@@ -1021,6 +1026,7 @@ bool Chunk::setBlockMetadata(int_t i, int_t j, int_t k, int_t l)
 
 	section->setExtBlockMetadata(i, j & 15, k, l);
 	++blockSectionRevision[j >> 4];
+	noteSectionBlockChange(i, j, k);
 	isModified = true;
 #if PLATFORM_SAVE_RUNTIME_CHUNK_EDITS_ON_UNLOAD
 	if (worldObj == nullptr || !worldObj->isPopulationFastPathChunk(this))
@@ -1632,6 +1638,7 @@ int_t Chunk::setChunkData(byte_t *abyte0, int_t i, int_t j, int_t k,
 		if (storageArrays[section] != nullptr)
 			storageArrays[section]->func_48708_d();
 		++blockSectionRevision[section];
+		noteWholeSectionChange(section);
 	}
 	generateHeightMap();
 	return k1;
@@ -1789,6 +1796,7 @@ bool Chunk::func_48494_a(const byte_t *bytes, std::size_t length,
 		{
 			storageArrays[section]->func_48708_d();
 			++blockSectionRevision[section];
+			noteWholeSectionChange(section);
 		}
 	}
 	generateHeightMap();
@@ -2103,5 +2111,6 @@ void Chunk::remapBlocks()
 		ChunkBlockMap::remapBlockArray(blocks.data(), (int_t)blocks.size());
 		storage->func_48708_d();
 		++blockSectionRevision[section];
+		noteWholeSectionChange(section);
 	}
 }

@@ -14,6 +14,10 @@ class ChunkPosition;
 class SpawnListEntry;
 class EnumCreatureType;
 
+// Bumped whenever isChunkPopulationPending() may answer differently for some
+// column (any provider, created or destroyed), so callers can cache answers.
+inline std::uint32_t g_chunkPopulationPendingRevision = 1;
+
 // net.minecraft.src.IChunkProvider
 class IChunkProvider
 {

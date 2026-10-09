@@ -52,8 +52,11 @@ namespace
 
 
 #if PLATFORM_DEFERRED_POPULATE
-	const int_t POPULATION_FOOTPRINT_AXIS = 2;
-	const int_t POPULATION_SECTION_COUNT = 8;
+	// Chunks a population batch checks for written sections: the 2x2 footprint
+	// and the ring around it (a big tree reaches one column out), every height.
+	const int_t POPULATION_TRACK_AXIS = 4;
+	const int_t POPULATION_TRACK_ORIGIN = -1;
+	const int_t POPULATION_SECTION_COUNT = Chunk::SECTION_COUNT;
 #endif
 }
 
@@ -79,6 +82,7 @@ ChunkProvider::ChunkProvider(World *world, IChunkLoader *ichunkloader, IChunkPro
 	, chunkUnloadRadius(15)
 	, chunkTopologyVersion(1)
 {
+	++g_chunkPopulationPendingRevision;
 	blankChunk = new EmptyChunk(world, std::vector<byte_t>(32768, 0), 0, 0);
 #if PLATFORM_INCREMENTAL_CHUNK_GENERATION
 	generationMoveX = 0;
@@ -165,6 +169,7 @@ ChunkProvider::ChunkProvider(World *world, IChunkLoader *ichunkloader, IChunkPro
 
 ChunkProvider::~ChunkProvider()
 {
+	++g_chunkPopulationPendingRevision;
 #if PLATFORM_ASYNC_CHUNK_GENERATION
 	delete asyncGenerationScheduler;
 	asyncGenerationScheduler = nullptr;
@@ -1333,16 +1338,19 @@ bool ChunkProvider::populateDeferredBatch(int_t i, int_t j, int_t maxSteps, long
 		return true;
 	}
 
-	Chunk *populationChunks[POPULATION_FOOTPRINT_AXIS * POPULATION_FOOTPRINT_AXIS] = {};
-	std::uint32_t before[POPULATION_FOOTPRINT_AXIS * POPULATION_FOOTPRINT_AXIS]
+	Chunk *populationChunks[POPULATION_TRACK_AXIS * POPULATION_TRACK_AXIS] = {};
+	std::uint32_t before[POPULATION_TRACK_AXIS * POPULATION_TRACK_AXIS]
 	                    [POPULATION_SECTION_COUNT] = {};
-	for (int_t dz = 0; dz < POPULATION_FOOTPRINT_AXIS; ++dz)
+	for (int_t dz = 0; dz < POPULATION_TRACK_AXIS; ++dz)
 	{
-		for (int_t dx = 0; dx < POPULATION_FOOTPRINT_AXIS; ++dx)
+		for (int_t dx = 0; dx < POPULATION_TRACK_AXIS; ++dx)
 		{
-			const int_t footprintIndex = dz * POPULATION_FOOTPRINT_AXIS + dx;
-			Chunk *footprintChunk = getLoadedChunk(JavaArithmetic::intAdd(i, dx), JavaArithmetic::intAdd(j, dz));
+			const int_t footprintIndex = dz * POPULATION_TRACK_AXIS + dx;
+			Chunk *footprintChunk = getLoadedChunk(JavaArithmetic::intAdd(i, dx + POPULATION_TRACK_ORIGIN),
+				JavaArithmetic::intAdd(j, dz + POPULATION_TRACK_ORIGIN));
 			populationChunks[footprintIndex] = footprintChunk;
+			if (footprintChunk != nullptr)
+				footprintChunk->clearSectionChangeBoxes();
 			for (int_t sectionY = 0; sectionY < POPULATION_SECTION_COUNT; ++sectionY)
 			{
 				before[footprintIndex][sectionY] = footprintChunk != nullptr
@@ -1387,7 +1395,7 @@ bool ChunkProvider::populateDeferredBatch(int_t i, int_t j, int_t maxSteps, long
 	if (worldObj != nullptr)
 	{
 		for (int_t footprintIndex = 0;
-			 footprintIndex < POPULATION_FOOTPRINT_AXIS * POPULATION_FOOTPRINT_AXIS;
+			 footprintIndex < POPULATION_TRACK_AXIS * POPULATION_TRACK_AXIS;
 			 ++footprintIndex)
 		{
 			Chunk *footprintChunk = populationChunks[footprintIndex];
@@ -1403,9 +1411,15 @@ bool ChunkProvider::populateDeferredBatch(int_t i, int_t j, int_t maxSteps, long
 				const int_t minX = JavaArithmetic::intMul(footprintChunk->xPosition, 16);
 				const int_t minY = sectionY << 4;
 				const int_t minZ = JavaArithmetic::intMul(footprintChunk->zPosition, 16);
-				worldObj->markBlocksDirty(minX, minY, minZ,
-				                          JavaArithmetic::intAdd(minX, 15), minY + 15,
-				                          JavaArithmetic::intAdd(minZ, 15));
+				// Only the written blocks (+-1 inside markBlocksDirty); the
+				// whole section if a write did not record its box.
+				Chunk::SectionChangeBox box{true, 0, 0, 0, 15, 15, 15};
+				(void)footprintChunk->takeSectionChangeBox(sectionY, box);
+				platformProfileTickPhase("#dirtyPopulate", 1);
+				worldObj->markBlocksDirty(JavaArithmetic::intAdd(minX, box.minX), minY + box.minY,
+				                          JavaArithmetic::intAdd(minZ, box.minZ),
+				                          JavaArithmetic::intAdd(minX, box.maxX), minY + box.maxY,
+				                          JavaArithmetic::intAdd(minZ, box.maxZ));
 			}
 		}
 	}
@@ -1459,6 +1473,7 @@ void ChunkProvider::enqueuePopulate(int_t i, int_t j)
 		return;
 	const std::uint64_t key = chunkKey(i, j);
 	if (populateQueued.insert(key).second)
+	{
 		populateQueue.emplace_back(i, j);
 		++g_chunkPopulationPendingRevision;
 	}
@@ -1733,6 +1748,8 @@ void ChunkProvider::drainPendingPopulate(int_t budget, bool frameSlice)
 		else
 		{
 			populateQueued.erase(key);
+			++g_chunkPopulationPendingRevision;
+			++statCompleted;
 		}
 #if PLATFORM_POPULATE_BUDGET_US > 0
 		if (System::nanoTime() - budgetStartNs >= budgetNs)

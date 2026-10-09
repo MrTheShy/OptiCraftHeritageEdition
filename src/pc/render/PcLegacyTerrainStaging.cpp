@@ -21,7 +21,7 @@ namespace
 }
 
 bool pcLegacyTerrainStagingAcquire(WorldRenderer *owner, World *world,
-    int_t x0, int_t y0, int_t z0, int_t x1, int_t y1, int_t z1)
+    int_t x0, int_t y0, int_t z0, int_t x1, int_t y1, int_t z1, bool snapshot)
 {
     if (owner == nullptr || world == nullptr)
         return false;
@@ -33,13 +33,15 @@ bool pcLegacyTerrainStagingAcquire(WorldRenderer *owner, World *world,
     clearRetainedBuffers(g_pcLegacyTerrainStaging);
     g_pcLegacyTerrainStaging.sectionCache.reset();
     g_pcLegacyTerrainStaging.sourceCache.reset();
+    g_pcLegacyTerrainStaging.owner = owner;
+    if (!snapshot)
+        return true;
 
     g_pcLegacyTerrainStaging.sourceCache.emplace(world,
         x0 - 1, y0 - 1, z0 - 1,
         x1 + 1, y1 + 1, z1 + 1);
     g_pcLegacyTerrainStaging.sectionCache.emplace(
         &*g_pcLegacyTerrainStaging.sourceCache, world, x0 - 1, y0 - 1, z0 - 1);
-    g_pcLegacyTerrainStaging.owner = owner;
     return true;
 }
 

@@ -42,6 +42,8 @@
 #include <cstdint>
 #include <cstring>
 #endif
+#include <cstring>
+#include "platform/Log.h"
 
 bool RenderBlocks::fancyGrass = true;
 
@@ -401,6 +403,77 @@ void RenderBlocks::setPcLegacyCompactTerrainMesh(RenderCapturedMesh *mesh, int_t
 	pcLegacyCompactOriginZ = originZ;
 }
 
+namespace
+{
+PcLegacyNaturalTileModes g_pcLegacyNaturalModes = {};
+bool g_pcLegacyNaturalCaptureTried = false;
+}
+
+const std::uint8_t *RenderBlocks::pcLegacyPrepareNaturalTextures()
+{
+	if (!Config::isNaturalTextures() || Block::stone == nullptr)
+		return nullptr;
+	PcLegacyNaturalCubeUv &table = pcLegacyNaturalCubeUv();
+	if (!table.ready && !g_pcLegacyNaturalCaptureTried)
+	{
+		g_pcLegacyNaturalCaptureTried = true;
+		// Each face function, run as resolveFaceTexture would leave it for a
+		// given rotation and flip, on tile 0 at the origin: its UVs are then
+		// the offsets inside a tile, keyed by the corner they belong to.
+		RenderBlocks capture;
+		capture.overrideBlockTexture = 0;
+		capture.enableAO = false;
+		Block *block = Block::stone;
+		block->setBlockBounds(0.0f, 0.0f, 0.0f, 1.0f, 1.0f, 1.0f);
+		Tessellator &tessellator = Tessellator::instance;
+		bool ok = true;
+		for (int side = 0; side < 6 && ok; ++side)
+			for (int rotation = 0; rotation < 4 && ok; ++rotation)
+				for (int flip = 0; flip < 2 && ok; ++flip)
+				{
+					capture.getFaceRotation(side) = rotation;
+					capture.flipTexture = flip != 0;
+					tessellator.startDrawingQuads();
+					tessellator.setTranslationD(0.0, 0.0, 0.0);
+					switch (side)
+					{
+					case 0: capture.renderBottomFace(block, 0.0, 0.0, 0.0, 0); break;
+					case 1: capture.renderTopFace(block, 0.0, 0.0, 0.0, 0); break;
+					case 2: capture.renderEastFace(block, 0.0, 0.0, 0.0, 0); break;
+					case 3: capture.renderWestFace(block, 0.0, 0.0, 0.0, 0); break;
+					case 4: capture.renderNorthFace(block, 0.0, 0.0, 0.0, 0); break;
+					default: capture.renderSouthFace(block, 0.0, 0.0, 0.0, 0); break;
+					}
+					capture.getFaceRotation(side) = 0;
+					capture.flipTexture = false;
+					RenderCapturedMesh mesh;
+					ok = tessellator.capture(mesh) && !mesh.positionShort && mesh.hasTexture && mesh.stride > 0;
+					unsigned seen = 0;
+					for (int v = 0; ok && v < mesh.vertexCount; ++v)
+					{
+						const unsigned char *vertex = reinterpret_cast<const unsigned char *>(mesh.raw.data()) +
+							static_cast<std::size_t>(v) * static_cast<std::size_t>(mesh.stride);
+						float position[3];
+						float uv[2];
+						std::memcpy(position, vertex, sizeof(position));
+						std::memcpy(uv, vertex + mesh.texCoordOffset, sizeof(uv));
+						const int corner = (position[0] > 0.5f ? 1 : 0) | (position[1] > 0.5f ? 2 : 0) |
+							(position[2] > 0.5f ? 4 : 0);
+						table.offset[side][rotation][flip][corner][0] = uv[0] * 256.0f;
+						table.offset[side][rotation][flip][corner][1] = uv[1] * 256.0f;
+						seen |= 1u << corner;
+					}
+					ok = ok && __builtin_popcount(seen) == 4;
+				}
+		table.ready = ok;
+		MC_LOG_INFO("render", "natural textures on compact faces: %s\n", ok ? "ready" : "capture failed, full path");
+	}
+	if (!table.ready)
+		return nullptr;
+	pcLegacyRefreshNaturalTileModes(g_pcLegacyNaturalModes);
+	return g_pcLegacyNaturalModes;
+}
+
 bool RenderBlocks::renderSimpleOpaqueCubeLegacy(Block *block, int_t i, int_t j, int_t k, unsigned char faceMask)
 {
 	if (block == nullptr || faceMask == 0)
@@ -471,25 +544,33 @@ bool RenderBlocks::renderSimpleOpaqueCubeWithColorMultiplierLegacy(Block *block,
 		return block->getBlockTexture(blockAccess, i, j, k, side);
 	};
 
+	// Natural Textures rides on the compact emitter (UVs captured from the face
+	// functions); without it those faces need the face functions themselves.
+	const bool naturalOn = Config::isNaturalTextures();
+	const bool naturalCompact = naturalOn && pcLegacyNaturalCubeUv().ready && usePackedWhiteFaceState &&
+		pcLegacyCompactTerrainMesh != nullptr && PLATFORM_COMPACT_TERRAIN_VERTICES;
 	const bool canUseLegacyDirectCubeEmitter = legacyInfo.staticTextureByMetadata &&
-		overrideBlockTexture < 0 && !Config::isConnectedTextures() && !Config::isNaturalTextures() &&
+		overrideBlockTexture < 0 && !ConnectedTextures::isActive() && (!naturalOn || naturalCompact) &&
 		!flipTexture && bottomFaceRotation == 0 && topFaceRotation == 0 &&
 		eastFaceRotation == 0 && westFaceRotation == 0 && northFaceRotation == 0 && southFaceRotation == 0;
 	int_t pcLegacyCurrentPackedColor = 0;
 	int_t pcLegacyCurrentPackedBrightness = 0;
-	if (!canUseLegacyDirectCubeEmitter)
+	if (!canUseLegacyDirectCubeEmitter || naturalOn)
 		block->setBlockBounds(0.0f, 0.0f, 0.0f, 1.0f, 1.0f, 1.0f);
 	auto renderLegacyFace = [&](int_t side, int_t texture)
 	{
+		const int naturalVariant = naturalCompact && texture >= 0 && texture < 256
+			? pcLegacyNaturalVariant(g_pcLegacyNaturalModes[texture], i, j, k, side)
+			: -1;
 		if (canUseLegacyDirectCubeEmitter && usePackedWhiteFaceState && pcLegacyCompactTerrainMesh != nullptr &&
 			PLATFORM_COMPACT_TERRAIN_VERTICES &&
 			pcLegacyEmitCompactUnitCubeFace(*pcLegacyCompactTerrainMesh,
 				pcLegacyCompactOriginX, pcLegacyCompactOriginY, pcLegacyCompactOriginZ,
-				side, i, j, k, texture, pcLegacyCurrentPackedColor, pcLegacyCurrentPackedBrightness))
+				side, i, j, k, texture, pcLegacyCurrentPackedColor, pcLegacyCurrentPackedBrightness, naturalVariant))
 		{
 			return;
 		}
-		if (canUseLegacyDirectCubeEmitter &&
+		if (canUseLegacyDirectCubeEmitter && naturalVariant < 0 &&
 			pcLegacyEmitUnitCubeFace(*tessellator, side, i, j, k, texture))
 		{
 			return;
@@ -2630,11 +2711,13 @@ bool RenderBlocks::renderStandardBlockWithAmbientOcclusion(Block *block, int_t i
 	int_t *aoPackedBrightnessCache = aoScratch.packedBrightness;
 	int_t *aoBlockIdCache = aoScratch.blockId;
 #else
-	float aoBrightnessCache[27] = {};
+	// Values are read only once their valid flag is set: only the flags need
+	// clearing per block.
+	float aoBrightnessCache[27];
 	unsigned char aoBrightnessValid[27] = {};
-	int_t aoPackedBrightnessCache[27] = {};
+	int_t aoPackedBrightnessCache[27];
 	unsigned char aoPackedBrightnessValid[27] = {};
-	int_t aoBlockIdCache[27] = {};
+	int_t aoBlockIdCache[27];
 	unsigned char aoBlockIdValid[27] = {};
 #endif
 
@@ -2713,7 +2796,16 @@ bool RenderBlocks::renderStandardBlockWithAmbientOcclusion(Block *block, int_t i
 	const bool aoFullCubeBounds = block->minX == 0.0 && block->minY == 0.0 && block->minZ == 0.0 &&
 		block->maxX == 1.0 && block->maxY == 1.0 && block->maxZ == 1.0;
 	auto aoSideVisible = [&](int_t x, int_t y, int_t z, int_t side) -> bool {
-		if (aoFullCubeBounds) return !accessIsBlockOpaqueCube(x, y, z);
+		if (aoFullCubeBounds)
+		{
+#if PLATFORM_PC_LEGACY
+			// The section snapshot's face mask, built with this same opacity
+			// test: one bit instead of a virtual neighbour lookup per face.
+			if (pcLegacyFaceMaskActive && aoBaseI == pcLegacyFaceX && aoBaseJ == pcLegacyFaceY && aoBaseK == pcLegacyFaceZ)
+				return (pcLegacyFaceMask & static_cast<unsigned char>(1u << side)) != 0;
+#endif
+			return !accessIsBlockOpaqueCube(x, y, z);
+		}
 		return shouldRenderFace(block, x, y, z, side);
 	};
 
@@ -2753,19 +2845,12 @@ bool RenderBlocks::renderStandardBlockWithAmbientOcclusion(Block *block, int_t i
 	bool flag4 = true;
 	bool flag5 = true;
 	bool flag6 = true;
-	aoLightValueXNeg = aoBrightnessAt( i - 1, j, k);
-	aoLightValueYNeg = aoBrightnessAt( i, j - 1, k);
-	aoLightValueZNeg = aoBrightnessAt( i, j, k - 1);
-	aoLightValueXPos = aoBrightnessAt( i + 1, j, k);
-	aoLightValueYPos = aoBrightnessAt( i, j + 1, k);
-	aoLightValueZPos = aoBrightnessAt( i, j, k + 1);
-	const int_t packedOwn = aoPackedBrightnessAt(i, j, k);
-	const int_t packedXNeg = block->minX <= 0.0 ? aoPackedBrightnessAt(i - 1, j, k) : packedOwn;
-	const int_t packedYNeg = block->minY <= 0.0 ? aoPackedBrightnessAt(i, j - 1, k) : packedOwn;
-	const int_t packedZNeg = block->minZ <= 0.0 ? aoPackedBrightnessAt(i, j, k - 1) : packedOwn;
-	const int_t packedXPos = block->maxX >= 1.0 ? aoPackedBrightnessAt(i + 1, j, k) : packedOwn;
-	const int_t packedYPos = block->maxY >= 1.0 ? aoPackedBrightnessAt(i, j + 1, k) : packedOwn;
-	const int_t packedZPos = block->maxZ >= 1.0 ? aoPackedBrightnessAt(i, j, k + 1) : packedOwn;
+	// A face reads only its own neighbour's AO value and packed light, so they
+	// are looked up when that face is drawn: a block with one exposed face used
+	// to read all thirteen. Pure cached reads, so the order does not matter.
+	auto packedFace = [&](bool flush, int_t x, int_t y, int_t z) -> int_t {
+		return flush ? aoPackedBrightnessAt(x, y, z) : aoPackedBrightnessAt(aoBaseI, aoBaseJ, aoBaseK);
+	};
 	Tessellator::instance.setBrightness(983055);
 	if (block->blockIndexInTexture == 3)
 	{
@@ -2777,6 +2862,8 @@ bool RenderBlocks::renderStandardBlockWithAmbientOcclusion(Block *block, int_t i
 	}
 	if (renderAllFaces || aoSideVisible(i, j - 1, k, 0))
 	{
+		aoLightValueYNeg = aoBrightnessAt(aoBaseI, aoBaseJ - 1, aoBaseK);
+		const int_t packedYNeg = packedFace(block->minY <= 0.0, aoBaseI, aoBaseJ - 1, aoBaseK);
 		float f4;
 		float f11;
 		float f18;
@@ -2869,6 +2956,8 @@ bool RenderBlocks::renderStandardBlockWithAmbientOcclusion(Block *block, int_t i
 	}
 	if (renderAllFaces || aoSideVisible(i, j + 1, k, 1))
 	{
+		aoLightValueYPos = aoBrightnessAt(aoBaseI, aoBaseJ + 1, aoBaseK);
+		const int_t packedYPos = packedFace(block->maxY >= 1.0, aoBaseI, aoBaseJ + 1, aoBaseK);
 		float f5;
 		float f12;
 		float f19;
@@ -2961,6 +3050,8 @@ bool RenderBlocks::renderStandardBlockWithAmbientOcclusion(Block *block, int_t i
 	}
 	if (renderAllFaces || aoSideVisible(i, j, k - 1, 2))
 	{
+		aoLightValueZNeg = aoBrightnessAt(aoBaseI, aoBaseJ, aoBaseK - 1);
+		const int_t packedZNeg = packedFace(block->minZ <= 0.0, aoBaseI, aoBaseJ, aoBaseK - 1);
 		float f6;
 		float f13;
 		float f20;
@@ -3075,6 +3166,8 @@ bool RenderBlocks::renderStandardBlockWithAmbientOcclusion(Block *block, int_t i
 	}
 	if (renderAllFaces || aoSideVisible(i, j, k + 1, 3))
 	{
+		aoLightValueZPos = aoBrightnessAt(aoBaseI, aoBaseJ, aoBaseK + 1);
+		const int_t packedZPos = packedFace(block->maxZ >= 1.0, aoBaseI, aoBaseJ, aoBaseK + 1);
 		float f7;
 		float f14;
 		float f21;
@@ -3189,6 +3282,8 @@ bool RenderBlocks::renderStandardBlockWithAmbientOcclusion(Block *block, int_t i
 	}
 	if (renderAllFaces || aoSideVisible(i - 1, j, k, 4))
 	{
+		aoLightValueXNeg = aoBrightnessAt(aoBaseI - 1, aoBaseJ, aoBaseK);
+		const int_t packedXNeg = packedFace(block->minX <= 0.0, aoBaseI - 1, aoBaseJ, aoBaseK);
 		float f8;
 		float f15;
 		float f22;
@@ -3303,6 +3398,8 @@ bool RenderBlocks::renderStandardBlockWithAmbientOcclusion(Block *block, int_t i
 	}
 	if (renderAllFaces || aoSideVisible(i + 1, j, k, 5))
 	{
+		aoLightValueXPos = aoBrightnessAt(aoBaseI + 1, aoBaseJ, aoBaseK);
+		const int_t packedXPos = packedFace(block->maxX >= 1.0, aoBaseI + 1, aoBaseJ, aoBaseK);
 		float f9;
 		float f16;
 		float f23;

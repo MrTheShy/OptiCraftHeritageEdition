@@ -53,11 +53,17 @@ namespace
                 {
                     for (int_t metadata = 0; metadata < 16; ++metadata)
                     {
+                        bool compact = true;
                         for (int_t side = 0; side < 6; ++side)
                         {
-                            info.textureByMetadata[static_cast<std::size_t>(metadata)][static_cast<std::size_t>(side)] =
+                            const std::int16_t texture =
                                 static_cast<std::int16_t>(block->getBlockTextureFromSideAndMetadata(side, metadata));
+                            info.textureByMetadata[static_cast<std::size_t>(metadata)][static_cast<std::size_t>(side)] = texture;
+                            compact = compact && texture >= 0 && texture < 256 &&
+                                (side < 2 || (texture != 3 && texture != 68 && texture != 77));
                         }
+                        if (compact)
+                            info.compactTextureMetadataMask |= static_cast<std::uint16_t>(1u << metadata);
                     }
                 }
             }

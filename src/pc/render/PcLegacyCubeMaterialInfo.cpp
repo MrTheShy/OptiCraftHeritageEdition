@@ -7,6 +7,9 @@
 #include <cstring>
 #include <limits>
 
+#include "net/minecraft/src/Config.h"
+#include "net/minecraft/src/NaturalProperties.h"
+#include "net/minecraft/src/NaturalTextures.h"
 #include "net/minecraft/src/Tessellator.h"
 
 namespace
@@ -101,8 +104,44 @@ void pcLegacySetVanillaFaceState(Tessellator &tessellator, int_t side, int_t pac
         tessellator.setBrightness(packedBrightness);
 }
 
+PcLegacyNaturalCubeUv &pcLegacyNaturalCubeUv()
+{
+    static PcLegacyNaturalCubeUv table;
+    return table;
+}
+
+void pcLegacyRefreshNaturalTileModes(PcLegacyNaturalTileModes &out)
+{
+    std::memset(out, 0, sizeof(PcLegacyNaturalTileModes));
+    if (!Config::isNaturalTextures())
+        return;
+    for (int tile = 0; tile < 256; ++tile)
+    {
+        const NaturalProperties *natural = NaturalTextures::getNaturalProperties(0, tile);
+        if (natural != nullptr)
+            out[tile] = static_cast<std::uint8_t>((natural->rotation & 7) | (natural->flip ? 8 : 0));
+    }
+}
+
+int pcLegacyNaturalVariant(std::uint8_t mode, int_t x, int_t y, int_t z, int_t side)
+{
+    if (mode == 0)
+        return -1;
+    // Same draw as RenderBlocks::resolveFaceTexture.
+    const int_t random = Config::getRandom(x, y, z, side);
+    const int rotationMode = mode & 7;
+    int rotation = 0;
+    if (rotationMode > 1)
+        rotation = random & 3;
+    if (rotationMode == 2)
+        rotation = (rotation / 2) * 3;
+    const bool flip = (mode & 8) != 0 && (random & 4) != 0;
+    return rotation * 2 + (flip ? 1 : 0);
+}
+
 bool pcLegacyEmitCompactUnitCubeFace(RenderCapturedMesh &mesh, int_t originX, int_t originY, int_t originZ,
-    int_t side, int_t x, int_t y, int_t z, int_t tile, int_t packedColor, int_t packedBrightness)
+    int_t side, int_t x, int_t y, int_t z, int_t tile, int_t packedColor, int_t packedBrightness,
+    int naturalVariant)
 {
     if (side < 0 || side >= 6 || tile < 0 || tile >= 256)
         return false;
@@ -146,7 +185,8 @@ bool pcLegacyEmitCompactUnitCubeFace(RenderCapturedMesh &mesh, int_t originX, in
     const std::int16_t y1 = static_cast<std::int16_t>(localY + 1);
     const std::int16_t z1 = static_cast<std::int16_t>(localZ + 1);
 
-    std::array<PcLegacyCompactTerrainVertex, 6> vertices{};
+    // No {}: every field, padding included, is written by setVertex.
+    std::array<PcLegacyCompactTerrainVertex, 6> vertices;
     auto setVertex = [&](int index, std::int16_t vx, std::int16_t vy, std::int16_t vz, float u, float v)
     {
         PcLegacyCompactTerrainVertex &vertex = vertices[static_cast<std::size_t>(index)];
@@ -196,10 +236,24 @@ bool pcLegacyEmitCompactUnitCubeFace(RenderCapturedMesh &mesh, int_t originX, in
         return false;
     }
 
-    const std::size_t oldInts = mesh.raw.size();
-    const std::size_t faceInts = sizeof(vertices) / sizeof(std::int32_t);
-    mesh.raw.resize(oldInts + faceInts);
-    std::memcpy(mesh.raw.data() + oldInts, vertices.data(), sizeof(vertices));
+    if (naturalVariant >= 0)
+    {
+        const PcLegacyNaturalCubeUv &natural = pcLegacyNaturalCubeUv();
+        if (!natural.ready || naturalVariant >= 8)
+            return false;
+        const float atlasX = static_cast<float>((tile & 0xf) << 4);
+        const float atlasY = static_cast<float>(tile & 0xf0);
+        const auto &corners = natural.offset[side][naturalVariant >> 1][naturalVariant & 1];
+        for (PcLegacyCompactTerrainVertex &vertex : vertices)
+        {
+            const int corner = (vertex.x != x0 ? 1 : 0) | (vertex.y != y0 ? 2 : 0) | (vertex.z != z0 ? 4 : 0);
+            vertex.u = (atlasX + corners[corner][0]) / kAtlasSize;
+            vertex.v = (atlasY + corners[corner][1]) / kAtlasSize;
+        }
+    }
+
+    const std::int32_t *faceInts = reinterpret_cast<const std::int32_t *>(vertices.data());
+    mesh.raw.insert(mesh.raw.end(), faceInts, faceInts + sizeof(vertices) / sizeof(std::int32_t));
     mesh.vertexCount += static_cast<int>(vertices.size());
     return true;
 }

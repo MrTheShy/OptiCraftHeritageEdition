@@ -98,6 +98,7 @@
 #include "World.h"
 #include "WorldProvider.h"
 #include "WorldHeight.h"
+#include "Chunk.h"
 
 #include "WorldRenderer.h"
 #if PLATFORM_PS2
@@ -2680,7 +2681,8 @@ bool RenderGlobal::updateRenderers(EntityLiving *entityliving, bool flag)
 		worldRenderersToUpdate,
 		entityliving,
 		flag,
-		requestedUpdateLimit);
+		requestedUpdateLimit,
+		mc != nullptr && mc->isGamePaused);
 	compactRendererUpdateQueue();
 	return worldRenderersToUpdate.empty();
 #elif PLATFORM_MESH_BUDGET
@@ -3319,6 +3321,25 @@ void RenderGlobal::markRenderersInRange(int_t i, int_t j, int_t k, int_t l, int_
 	const int_t centerSectionX = MathHelper::bucketInt((i + l) / 2, 16);
 	const int_t centerSectionY = MathHelper::bucketInt((j + i1) / 2, 16);
 	const int_t centerSectionZ = MathHelper::bucketInt((k + j1) / 2, 16);
+#if PLATFORM_PC_LEGACY
+	// For a single block mark the range is the block +-1, so its centre is the
+	// edited block, already holding its new id.
+	bool editMadeOpaque = false;
+	if (worldObj != nullptr && worldObj->isMarkingFromPlayerEdit() && !worldObj->isMarkingFromLighting())
+	{
+		// Resident chunks only: a mark raised while that chunk is still being
+		// generated (light from the edit spilling into an unloaded neighbour)
+		// would otherwise generate it again from here, recursively, until the
+		// main thread's stack overflowed.
+		const int_t cx = (i + l) / 2, cy = (j + i1) / 2, cz = (k + j1) / 2;
+		Chunk *centerChunk = cy >= 0 && cy < WorldHeight::HEIGHT
+			? worldObj->getChunkIfExists(JavaArithmetic::intShr(cx, 4), JavaArithmetic::intShr(cz, 4))
+			: nullptr;
+		const int_t editedId = centerChunk != nullptr ? centerChunk->getBlockID(cx & 15, cy, cz & 15) : 0;
+		Block *edited = editedId > 0 && editedId < Block::BLOCK_REGISTRY_SIZE ? Block::blocksList[editedId] : nullptr;
+		editMadeOpaque = edited != nullptr && edited->isOpaqueCube();
+	}
+#endif
 
 	for (int_t i3 = k1; i3 <= j2; i3++)
 	{
@@ -3399,7 +3420,34 @@ void RenderGlobal::markRenderersInRange(int_t i, int_t j, int_t k, int_t l, int_
 				// Legacy keeps only one queue entry, but active incremental builds still
 				// need to hear every mutation so population can be coalesced safely.
 				enqueueRendererUpdate(worldrenderer);
-				worldrenderer->markDirty();
+#if PLATFORM_PROFILE_RENDER_PHASES
+				platformProfileTickPhase(worldObj == nullptr ? "#markOther"
+					: worldObj->isMarkingFromLighting() ? "#markLight"
+					: worldObj->isMarkingFromPlayerEdit() ? "#markEdit" : "#markWorld", 1);
+#endif
+				// As on PS2/Wii: light changes and world-driven block changes finish
+				// the build in progress and queue one more, instead of throwing it
+				// away; while the light queue drains that was most of the build time.
+				// Player edits still restart at once.
+				if (worldObj != nullptr && (worldObj->isMarkingFromLighting() || !worldObj->isMarkingFromPlayerEdit()))
+					worldrenderer->markDirtyFromLighting();
+				else
+				{
+					worldrenderer->markDirty();
+					// Publish order of the edit's sections (see pcLegacyEditOrder).
+					// Each old mesh stays on screen until its new one is ready, so:
+					// a block that became see-through (broken) goes last, after the
+					// face neighbours whose newly exposed faces it still hides; a
+					// placed solid block goes first, hiding the neighbour faces it
+					// covers until those are rebuilt. Diagonal sections only change
+					// shading and follow the edit's first section.
+					const std::uint8_t order = editMadeOpaque
+						? (sectionDiff == 0 ? 1 : 2)
+						: (sectionDiff == 1 ? 1 : 2);
+					if (worldrenderer->pcLegacyEditOrder == 0 || order < worldrenderer->pcLegacyEditOrder)
+						worldrenderer->pcLegacyEditOrder = order;
+					++WorldRenderer::editStamp;
+				}
 #else
 				if (!worldrenderer->needsUpdate)
 				{

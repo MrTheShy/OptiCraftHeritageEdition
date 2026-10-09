@@ -1,3 +1,4 @@
+#include "platform/Profiler.h"
 #include "pc/render/PcLegacySectionCache.h"
 
 #if PLATFORM_PC_LEGACY
@@ -11,6 +12,7 @@
 #include "net/minecraft/src/Material.h"
 #include "net/minecraft/src/NibbleArray.h"
 #include "net/minecraft/src/World.h"
+#include "net/minecraft/src/WorldHeight.h"
 #include "net/minecraft/src/WorldProvider.h"
 #include "pc/render/PcLegacyBlockRenderInfo.h"
 #include "pc/tuning/PcLegacyTuning.h"
@@ -19,7 +21,11 @@ PcLegacySectionCache::PcLegacySectionCache(ChunkCache *sourceIn, World *worldIn,
     int_t minXIn, int_t minYIn, int_t minZIn)
     : source(sourceIn), world(worldIn), minX(minXIn), minY(minYIn), minZ(minZIn)
 {
-    preloadBlockIds();
+    {
+        PlatformTickPhaseScope phase("meshIds");
+        preloadBlockIds();
+    }
+    PlatformTickPhaseScope phase("meshPre");
     precomputeSectionData();
 }
 
@@ -245,7 +251,7 @@ int_t PcLegacySectionCache::getLightBrightnessForSkyBlocks(int_t x, int_t y, int
     const std::size_t cell = static_cast<std::size_t>(index);
     if (!packedLightValid[cell])
     {
-        packedLight[cell] = source->getLightBrightnessForSkyBlocks(x, y, z, 0);
+        packedLight[cell] = loadPackedLight(x, y, z);
         packedLightValid[cell] = 1;
     }
 
@@ -255,6 +261,28 @@ int_t PcLegacySectionCache::getLightBrightnessForSkyBlocks(int_t x, int_t y, int
     if (blockLight < minimumBlockLight)
         blockLight = minimumBlockLight;
     return (skyLight << 20) | (blockLight << 4);
+}
+
+// source->getLightBrightnessForSkyBlocks(x, y, z, 0), the way fillShellFace
+// (PcLegacyMeshWorker.cpp) reads it: one section lookup and two nibbles,
+// instead of a virtual id read and a chunk walk for sky and again for block.
+int_t PcLegacySectionCache::loadPackedLight(int_t x, int_t y, int_t z)
+{
+    // Same border test as ChunkCache::getSkyBlockTypeBrightness.
+    const bool insideWorld = x >= -30000000 && z >= -30000000 && x < 30000000 && z <= 30000000;
+    if (insideWorld && y >= 0 && y < WorldHeight::HEIGHT && source->hasResidentChunkAtBlock(x, z))
+    {
+        const ExtendedBlockStorage *storage = source->getResidentBlockStorageAt(x, y, z);
+        if (storage == nullptr)
+            return 15 << 20; // no section: Chunk::getSavedLightValue defaults, sky 15, block 0
+        const int_t id = storage->getExtBlockID(x & 15, y & 15, z & 15);
+        if (id < 0 || id >= Block::BLOCK_REGISTRY_SIZE || !Block::useNeighborBrightness[id])
+        {
+            return (storage->getExtSkylightValue(x & 15, y & 15, z & 15) << 20) |
+                (storage->getExtBlocklightValue(x & 15, y & 15, z & 15) << 4);
+        }
+    }
+    return source->getLightBrightnessForSkyBlocks(x, y, z, 0);
 }
 
 int_t PcLegacySectionCache::getCachedLightValue(int_t x, int_t y, int_t z, int index)
@@ -390,7 +418,7 @@ int_t PcLegacySectionCache::getFacePackedBrightness(int_t x, int_t y, int_t z, i
     const std::size_t cell = static_cast<std::size_t>(index);
     if (!packedLightValid[cell])
     {
-        packedLight[cell] = source->getLightBrightnessForSkyBlocks(x, y, z, 0);
+        packedLight[cell] = loadPackedLight(x, y, z);
         packedLightValid[cell] = 1;
     }
 

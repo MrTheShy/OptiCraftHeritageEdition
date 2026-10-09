@@ -17,6 +17,10 @@ struct PcLegacyBlockRenderInfo
     bool simpleOpaqueCube = false;
     bool staticTextureByMetadata = false;
     bool defaultWhiteColorMultiplier = false;
+    // Bit per metadata whose six textures the compact unit-cube emitter takes
+    // unchanged: atlas tiles 0..255, and no side tile that RenderBlocks swaps
+    // or doubles for Better Grass / fancy grass (3, 68, 77).
+    std::uint16_t compactTextureMetadataMask = 0;
     std::array<std::array<std::int16_t, 6>, 16> textureByMetadata{};
 };
 

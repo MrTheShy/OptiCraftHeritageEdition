@@ -33,6 +33,7 @@
 #endif
 #include "platform/PlatformCompat.h"
 #include "platform/ExtendedProfiler.h"
+#include "platform/Profiler.h"
 #if PLATFORM_PC_LEGACY
 #include "pc/render/PcLegacyStaticTileEntityMesh.h"
 #endif
@@ -535,7 +536,12 @@ void WorldRenderer::markDirty()
 		if (worldObj != nullptr && worldObj->isChunkPopulationPendingForRendering(chunkX, chunkZ))
 			pcLegacyBuildDirtyDuringBuild = true;
 		else
+		{
+#if PLATFORM_PROFILE_RENDER_PHASES
+			platformProfileTickPhase("#meshRestart", 1);
+#endif
 			pcLegacyResetBuildState();
+		}
 	}
 #else
 	pcLegacyResetBuildState();
@@ -643,6 +649,7 @@ void WorldRenderer::setDontDraw()
 	#endif
 #if PLATFORM_PC_LEGACY
 	pcLegacyResetBuildState();
+	pcLegacyEditOrder = 0;
 	for (int_t face = 0; face < 6; ++face)
 		pcLegacyPublishedVisibility[face] = 0x3f;
 	pcLegacyCpuVisible = true;

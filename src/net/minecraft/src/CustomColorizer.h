@@ -19,6 +19,7 @@ public:
 	static void update(RenderEngine *engine);
 	static int_t getColorMultiplier(Block *block, IBlockAccess *access, int_t x, int_t y, int_t z);
 	static bool hasBlockPalette(int_t blockId, int_t metadata);
+	static bool anyBlockPalette() { return hasBlockPalettes; }
 	static int_t getFluidColor(Block *block, IBlockAccess *access, int_t x, int_t y, int_t z);
 	static int_t getRedstoneColor(int_t level);
 	static int_t getStemColorMultiplier(BlockStem *stem, IBlockAccess *access, int_t x, int_t y, int_t z);

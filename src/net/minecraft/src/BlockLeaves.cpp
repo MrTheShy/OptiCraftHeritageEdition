@@ -1,3 +1,4 @@
+#include "platform/world/ColumnColorCache.h"
 #include "BlockLeaves.h"
 #include "Config.h"
 #include "Material.h"
@@ -43,22 +44,26 @@ int_t BlockLeaves::colorMultiplier(IBlockAccess *iblockaccess, int_t i, int_t j,
 	int_t metadata = iblockaccess->getBlockMetadata(i, j, k);
 	if ((metadata & 3) == 1) return ColorizerFoliage::getFoliageColorPine();
 	if ((metadata & 3) == 2) return ColorizerFoliage::getFoliageColorBirch();
-	if (!Config::isSmoothBiomes())
-		return iblockaccess->getBiomeGenForCoords(i, k)->getBiomeFoliageColor();
-	int_t red = 0;
-	int_t green = 0;
-	int_t blue = 0;
-	for (int_t dz = -1; dz <= 1; ++dz)
+	static ColumnColorCache s_foliageColors;
+	return s_foliageColors.get(iblockaccess->getWorldChunkManager(), Config::isSmoothBiomes(), i, k, [&]() -> int_t
 	{
-		for (int_t dx = -1; dx <= 1; ++dx)
+		if (!Config::isSmoothBiomes())
+			return iblockaccess->getBiomeGenForCoords(i, k)->getBiomeFoliageColor();
+		int_t red = 0;
+		int_t green = 0;
+		int_t blue = 0;
+		for (int_t dz = -1; dz <= 1; ++dz)
 		{
-			int_t color = iblockaccess->getBiomeGenForCoords(JavaArithmetic::intAdd(i, dx), JavaArithmetic::intAdd(k, dz))->getBiomeFoliageColor();
-			red += color >> 16 & 255;
-			green += color >> 8 & 255;
-			blue += color & 255;
+			for (int_t dx = -1; dx <= 1; ++dx)
+			{
+				int_t color = iblockaccess->getBiomeGenForCoords(JavaArithmetic::intAdd(i, dx), JavaArithmetic::intAdd(k, dz))->getBiomeFoliageColor();
+				red += color >> 16 & 255;
+				green += color >> 8 & 255;
+				blue += color & 255;
+			}
 		}
-	}
-	return (red / 9 & 255) << 16 | (green / 9 & 255) << 8 | blue / 9 & 255;
+		return (red / 9 & 255) << 16 | (green / 9 & 255) << 8 | blue / 9 & 255;
+	});
 }
 
 void BlockLeaves::onBlockRemoval(World *world, int_t i, int_t j, int_t k)

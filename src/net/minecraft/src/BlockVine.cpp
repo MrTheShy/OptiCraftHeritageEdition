@@ -1,3 +1,4 @@
+#include "platform/world/ColumnColorCache.h"
 #include "BlockVine.h"
 
 #include <algorithm>
@@ -179,34 +180,41 @@ int_t BlockVine::colorMultiplier(IBlockAccess *blockAccess, int_t x, int_t y, in
     if (manager == nullptr)
         return ColorizerFoliage::getFoliageColorBasic();
 
-    if (!Config::isSmoothBiomes())
-    {
-        BiomeGenBase *biome = manager->getBiomeGenAt(x, z);
-        return biome != nullptr ? biome->getBiomeFoliageColor() : ColorizerFoliage::getFoliageColorBasic();
-    }
-
-    int_t red = 0;
-    int_t green = 0;
-    int_t blue = 0;
-    int_t samples = 0;
-    for (int_t dz = -1; dz <= 1; ++dz)
-    {
-        for (int_t dx = -1; dx <= 1; ++dx)
-        {
-            BiomeGenBase *biome = manager->getBiomeGenAt(x + dx, z + dz);
-            if (biome == nullptr)
-                continue;
-            const int_t color = biome->getBiomeFoliageColor();
-            red += color >> 16 & 255;
-            green += color >> 8 & 255;
-            blue += color & 255;
-            ++samples;
-        }
-    }
-
-    if (samples == 0)
-        return ColorizerFoliage::getFoliageColorBasic();
-    return (red / samples & 255) << 16 | (green / samples & 255) << 8 | blue / samples & 255;
+	static ColumnColorCache s_vineColors;
+	return s_vineColors.get(manager, Config::isSmoothBiomes(), x, z, [&]() -> int_t
+	{
+	    if (!Config::isSmoothBiomes())
+	    {
+	        BiomeGenBase *biome = blockAccess->getBiomeGenForCoords(x, z);
+	        return biome != nullptr ? biome->getBiomeFoliageColor() : ColorizerFoliage::getFoliageColorBasic();
+	    }
+	
+	    int_t red = 0;
+	    int_t green = 0;
+	    int_t blue = 0;
+	    int_t samples = 0;
+	    for (int_t dz = -1; dz <= 1; ++dz)
+	    {
+	        for (int_t dx = -1; dx <= 1; ++dx)
+	        {
+	            // The chunk's own biome, as leaves read it: the generator's
+	            // biome cache missed at every column of newly loaded terrain
+	            // (a 16x16 layer pass each, up to 10 ms in one mesh step).
+	            BiomeGenBase *biome = blockAccess->getBiomeGenForCoords(x + dx, z + dz);
+	            if (biome == nullptr)
+	                continue;
+	            const int_t color = biome->getBiomeFoliageColor();
+	            red += color >> 16 & 255;
+	            green += color >> 8 & 255;
+	            blue += color & 255;
+	            ++samples;
+	        }
+	    }
+	
+	    if (samples == 0)
+	        return ColorizerFoliage::getFoliageColorBasic();
+	    return (red / samples & 255) << 16 | (green / samples & 255) << 8 | blue / samples & 255;
+	});
 }
 
 void BlockVine::onNeighborBlockChange(World *world, int_t x, int_t y, int_t z, int_t neighborId)

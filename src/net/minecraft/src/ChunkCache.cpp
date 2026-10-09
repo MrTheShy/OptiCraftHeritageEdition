@@ -129,6 +129,18 @@ bool ChunkCache::resolveFastBases()
 }
 #endif
 
+bool ChunkCache::refreshResidentChunks()
+{
+	for (int_t x = 0; x < chunkArrayWidth; ++x)
+		for (int_t z = 0; z < chunkArrayDepth; ++z)
+			if (chunkArray[cellIndex(x, z)] != worldObj->getChunkIfExists(chunkX + x, chunkZ + z))
+				return false;
+#if PLATFORM_FAST_CHUNK_BLOCK_READS
+	fastBasesValid = resolveFastBases();
+#endif
+	return true;
+}
+
 bool ChunkCache::hasResidentChunkAtBlock(int_t i, int_t k) const
 {
 	const int_t localX = JavaArithmetic::intSub(JavaArithmetic::intShr(i, 4), chunkX);
