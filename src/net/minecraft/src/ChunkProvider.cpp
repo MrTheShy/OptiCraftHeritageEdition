@@ -1072,6 +1072,10 @@ void ChunkProvider::unloadChunk(std::uint64_t key, Chunk *chunk)
 #endif
 
 	chunk->onChunkUnload();
+	// Last, right before the free: saving and onChunkUnload can look this
+	// chunk up again (it is still in chunkMap) and re-arm the cache with it.
+	if (lastChunk == chunk)
+		lastChunk = nullptr;
 	delete chunk;
 }
 
