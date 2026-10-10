@@ -6,6 +6,7 @@
 
 #include <psp2/ctrl.h>
 #include <psp2/kernel/processmgr.h>
+#include <psp2/touch.h>
 
 #include "SDL.h"
 
@@ -16,7 +17,11 @@
 #include "lwjgl/VitaIme.h"
 
 #include "client/Minecraft.h"
+#include "net/minecraft/src/EntityPlayerSP.h"
 #include "net/minecraft/src/GameSettings.h"
+#include "net/minecraft/src/InventoryPlayer.h"
+#include "net/minecraft/src/ScaledResolution.h"
+#include "net/minecraft/src/legacy/LegacyHudLayout.h"
 
 namespace lwjgl
 {
@@ -58,6 +63,8 @@ enum Input
 };
 
 constexpr float kMoveDeadZone = 0.2f;
+constexpr int kChatCornerWidth = 140;
+constexpr int kChatCornerHeight = 90;
 constexpr int kLookDeadZone = 24;
 constexpr float kLookSpeedPerSecond = 1000.0f;
 constexpr float kMaxFrameSeconds = 0.1f;
@@ -75,6 +82,7 @@ bool g_cursorKnown = false;
 float g_cursorX = 0.0f;
 float g_cursorY = 0.0f;
 bool g_sneaking = false;
+bool g_touching = false;
 int g_stickX = 128;
 int g_stickY = 128;
 
@@ -157,6 +165,12 @@ void sendKey(int code, bool down)
 	Keyboard::detail::pushEvent(e);
 }
 
+void tapKey(int code)
+{
+	sendKey(code, true);
+	sendKey(code, false);
+}
+
 void sendMouseButton(int code, bool down)
 {
 	SDL_Event e = {};
@@ -233,7 +247,10 @@ void moveCursor(const SceCtrlData &pad, float seconds)
 	const float dx = cursorAxis(pad.lx, seconds);
 	const float dy = cursorAxis(pad.ly, seconds);
 	if (dx == 0.0f && dy == 0.0f)
+	{
+		g_cursorKnown = false;
 		return;
+	}
 
 	if (!g_cursorKnown)
 	{
@@ -284,6 +301,49 @@ int takeWhole(float value, float &remainder)
 	const int whole = static_cast<int>(remainder);
 	remainder -= static_cast<float>(whole);
 	return whole;
+}
+
+void selectHotbarAt(int px, int py)
+{
+	Minecraft *mc = Minecraft::getMinecraft();
+	if (mc == nullptr || mc->gameSettings == nullptr || mc->thePlayer == nullptr || mc->thePlayer->inventory == nullptr)
+		return;
+
+	ScaledResolution resolution(mc->gameSettings, mc->displayWidth, mc->displayHeight);
+	const int width = resolution.getScaledWidth();
+	const int height = resolution.getScaledHeight();
+	const int x = px * width / mc->displayWidth;
+	const int y = py * height / mc->displayHeight;
+	const int bottom = height - (mc->gameSettings->legacyUI ? legacyHudBottomInset(mc->isSplitScreenActive()) : 0);
+	const int left = width / 2 - 91;
+	if (x < left || x >= left + 182 || y < bottom - 22 || y >= bottom)
+		return;
+
+	int slot = (x - left - 1) / 20;
+	if (slot < 0)
+		slot = 0;
+	if (slot > 8)
+		slot = 8;
+	mc->thePlayer->inventory->currentItem = slot;
+}
+
+void pollTouch()
+{
+	SceTouchData touch = {};
+	if (sceTouchPeek(SCE_TOUCH_PORT_FRONT, &touch, 1) < 0)
+		return;
+
+	const bool touching = touch.reportNum > 0;
+	if (touching && !g_touching && g_grabbed)
+	{
+		const int x = touch.report[0].x * Display::getWidth() / 1920;
+		const int y = touch.report[0].y * Display::getHeight() / 1088;
+		if (x >= Display::getWidth() - kChatCornerWidth && y < kChatCornerHeight)
+			tapKey(SDLK_t);
+		else
+			selectHotbarAt(x, y);
+	}
+	g_touching = touching;
 }
 
 }
@@ -338,6 +398,8 @@ void poll()
 		g_stickY = 128;
 		return;
 	}
+
+	pollTouch();
 
 	for (int i = 0; i < InputCount; ++i)
 	{
@@ -413,6 +475,20 @@ void setGrabbed(bool grabbed)
 bool grabbed()
 {
 	return g_grabbed;
+}
+
+bool touchMouseEvent(const SDL_Event &e)
+{
+	if (!g_grabbed)
+		return false;
+	switch (e.type)
+	{
+		case SDL_MOUSEMOTION: return e.motion.which == SDL_TOUCH_MOUSEID;
+		case SDL_MOUSEBUTTONDOWN:
+		case SDL_MOUSEBUTTONUP: return e.button.which == SDL_TOUCH_MOUSEID;
+		case SDL_MOUSEWHEEL: return e.wheel.which == SDL_TOUCH_MOUSEID;
+		default: return false;
+	}
 }
 
 bool sneaking()

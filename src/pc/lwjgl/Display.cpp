@@ -126,6 +126,10 @@ void processMessages()
 			case SDL_MOUSEBUTTONDOWN:
 			case SDL_MOUSEBUTTONUP:
 			case SDL_MOUSEWHEEL:
+#ifdef VITA_PLATFORM
+				if (VitaPad::touchMouseEvent(e))
+					break;
+#endif
 				Mouse::detail::pushEvent(e);
 				break;
 			case SDL_KEYDOWN:

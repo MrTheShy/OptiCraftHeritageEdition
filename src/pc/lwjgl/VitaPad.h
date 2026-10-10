@@ -2,6 +2,8 @@
 
 #ifdef VITA_PLATFORM
 
+#include "SDL_events.h"
+
 namespace lwjgl
 {
 namespace VitaPad
@@ -14,6 +16,7 @@ void setGrabbed(bool grabbed);
 bool grabbed();
 void leftStick(float &x, float &y);
 bool sneaking();
+bool touchMouseEvent(const SDL_Event &e);
 
 }
 }
