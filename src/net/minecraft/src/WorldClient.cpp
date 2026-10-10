@@ -1,4 +1,6 @@
 #include "WorldClient.h"
+#include "MathHelper.h"
+#include <cstring>
 #include "platform/Log.h"
 #include "WorldSettings.h"
 #include "WorldInfo.h"
@@ -59,11 +61,16 @@ bool inflateDeferredChunkPacket(const std::vector<byte_t> &compressed, int_t pri
     if (compressed.empty() || outputSize == 0)
         return false;
 
-    out.assign(outputSize, 0);
+    // The caller reuses one buffer: no reallocation, and only the bytes zlib
+    // did not write are zeroed (was a full memset of up to 196 KB per column).
+    out.resize(outputSize);
     uLongf actual = static_cast<uLongf>(out.size());
-    return uncompress(reinterpret_cast<Bytef *>(out.data()), &actual,
-                      reinterpret_cast<const Bytef *>(compressed.data()),
-                      static_cast<uLong>(compressed.size())) == Z_OK;
+    const bool ok = uncompress(reinterpret_cast<Bytef *>(out.data()), &actual,
+                               reinterpret_cast<const Bytef *>(compressed.data()),
+                               static_cast<uLong>(compressed.size())) == Z_OK;
+    if (actual < out.size())
+        std::memset(out.data() + actual, 0, out.size() - actual);
+    return ok;
 }
 #endif
 }
@@ -587,7 +594,7 @@ bool WorldClient::promoteDeferredChunk(int_t chunkX, int_t chunkZ)
         return false;
 
     DeferredChunk &entry = it->second;
-    std::vector<byte_t> data;
+    std::vector<byte_t> &data = inflateBuffer;
     if (!inflateDeferredChunkPacket(entry.compressed, entry.primaryMask, true, data))
     {
         forgetDeferredChunk(entry.chunkX, entry.chunkZ);
@@ -817,8 +824,8 @@ bool WorldClient::shouldKeepChunk(int_t chunkX, int_t chunkZ) const
 	if (playerEntities.empty() || playerEntities[0] == nullptr)
 		return false;
 	const EntityPlayer *player = playerEntities[0];
-	const int_t centerX = JavaArithmetic::intShr(JavaArithmetic::doubleToInt(std::floor(player->posX)), 4);
-	const int_t centerZ = JavaArithmetic::intShr(JavaArithmetic::doubleToInt(std::floor(player->posZ)), 4);
+	const int_t centerX = JavaArithmetic::intShr(MathHelper::floor_double(player->posX), 4);
+	const int_t centerZ = JavaArithmetic::intShr(MathHelper::floor_double(player->posZ), 4);
 #if PLATFORM_PS2
 	// The active promotion window is the cache radius. The unload radius is only
 	// hysteresis for columns that were already resident before the player moved;
@@ -840,8 +847,8 @@ void WorldClient::trimClientChunkCache()
 	if (playerEntities.empty() || playerEntities[0] == nullptr || clientChunkProvider == nullptr)
 		return;
 	const EntityPlayer *player = playerEntities[0];
-	const int_t centerX = JavaArithmetic::intShr(JavaArithmetic::doubleToInt(std::floor(player->posX)), 4);
-	const int_t centerZ = JavaArithmetic::intShr(JavaArithmetic::doubleToInt(std::floor(player->posZ)), 4);
+	const int_t centerX = JavaArithmetic::intShr(MathHelper::floor_double(player->posX), 4);
+	const int_t centerZ = JavaArithmetic::intShr(MathHelper::floor_double(player->posZ), 4);
 	clientChunkProvider->unloadOutsideRadius(centerX, centerZ, PLATFORM_CHUNK_UNLOAD_RADIUS);
 #endif
 }

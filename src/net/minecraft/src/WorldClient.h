@@ -103,6 +103,8 @@ private:
 	std::size_t deferredChunkBytes = 0;
 	std::size_t deferredBlockChangeCount = 0;
 	ulong_t deferredChunkStamp = 0;
+	// Inflate target reused by every promotion; freed with the world.
+	std::vector<byte_t> inflateBuffer;
 	ulong_t deferredChunkEvictions = 0;
 	ulong_t deferredChunkBudgetOverflows = 0;
 	bool deferredChunkBudgetExceeded = false;
