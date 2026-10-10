@@ -35,7 +35,7 @@ std::thread s_thread;
 std::mutex s_mutex;
 std::condition_variable s_condition;
 
-bool validateOgg(const std::string &path)
+[[maybe_unused]] bool validateOgg(const std::string &path)
 {
     int error = 0;
     stb_vorbis *vorbis = platformOpenVorbis(path, &error);
@@ -78,6 +78,16 @@ void decoderThread(std::string path)
 
     const stb_vorbis_info info = stb_vorbis_get_info(vorbis);
 #ifdef VITA_PLATFORM
+    // start() no longer opens the file to validate it on the game thread (see
+    // there), so the same check happens here, before any sample is produced.
+    if (info.channels < 1 || info.channels > 2 || info.sample_rate != kOutputSampleRate)
+    {
+        stb_vorbis_close(vorbis);
+        std::lock_guard<std::mutex> lock(s_mutex);
+        s_eof = true;
+        s_running = false;
+        return;
+    }
     static std::array<float, kDecodeFrames * 2> decoded{};
     static std::array<float, kDecodeFrames * 2> stereo{};
 #else
@@ -246,8 +256,15 @@ bool start(const std::string &path)
     }
     else if (isOgg)
     {
+#ifndef VITA_PLATFORM
         if (!validateOgg(path))
             return false;
+#endif
+        // Vita: opening the stream to validate it parsed the Vorbis setup
+        // headers on the game thread and then the decoder thread parsed them
+        // again. decoderThread() validates; a rejected file just ends the
+        // stream at once. Together with the wait below this was the whole
+        // 45 ms "controller" tick phase when a music track started.
     }
     else
     {
@@ -265,10 +282,15 @@ bool start(const std::string &path)
         s_running = true;
     }
     s_thread = isPcm ? std::thread(decoderPcmThread, path) : std::thread(decoderThread, path);
+#ifndef VITA_PLATFORM
     {
         std::unique_lock<std::mutex> lock(s_mutex);
         s_condition.wait_for(lock, std::chrono::milliseconds(50), [] { return s_count >= 4096 || s_eof || s_stop; });
     }
+#endif
+    // Vita: do not park the game thread for up to 50 ms until the decoder has
+    // produced its first block. The mixer reads whatever is in the ring, so the
+    // first fraction of a second of a track is simply a little later.
     return true;
 }
 

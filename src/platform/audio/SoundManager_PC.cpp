@@ -35,14 +35,23 @@ void SoundManager::tryToSetLibraryAndCodecs() {}
 #include <cmath>
 #include <iostream>
 #include <vector>
+#include <memory>
 #include <mutex>
 #include <algorithm>
 #include <cstring>
 #include <cstdlib>
 
 #ifdef VITA_PLATFORM
+#include <chrono>
+#include <condition_variable>
+#include <deque>
 #include <string>
+#include <thread>
 #include <unordered_map>
+#include <unordered_set>
+#include <psp2/kernel/threadmgr.h>
+#include "java/System.h"
+#include "platform/Profiler.h"
 #endif
 
 #include "SDL.h"
@@ -72,9 +81,12 @@ enum class AudioBus
     Streaming
 };
 
+// Shared with the sound cache, so playing a cached sound copies nothing.
+using PcmBuffer = std::shared_ptr<const std::vector<float>>;
+
 struct AudioChannel
 {
-    std::vector<float> pcm;    // interleaved L/R samples, normalised [-1,1]
+    PcmBuffer pcm;             // interleaved L/R samples, normalised [-1,1]
     size_t pos     = 0;
     bool   active  = false;
     bool   looping = false;
@@ -153,36 +165,46 @@ static std::vector<float> decodeWav(const std::string &path)
 }
 
 #ifdef VITA_PLATFORM
-static std::unordered_map<std::string, std::vector<float>> s_soundCache;
+static std::unordered_map<std::string, PcmBuffer> s_soundCache;
 static std::size_t s_soundCacheBytes = 0;
+static std::mutex s_cacheMutex;
 static constexpr std::size_t kSoundCacheLimitBytes = 32u * 1024u * 1024u;
 static constexpr std::size_t kSoundCacheEntryLimitBytes = 2u * 1024u * 1024u;
 #endif
 
 static std::vector<float> loadSoundUncached(const std::string &path, float pitch);
 
-static std::vector<float> loadSound(const std::string &path, float pitch = 1.0f)
+#ifdef VITA_PLATFORM
+static PcmBuffer cachedSound(const std::string &path)
+{
+    std::lock_guard<std::mutex> lock(s_cacheMutex);
+    auto cached = s_soundCache.find(path);
+    return cached != s_soundCache.end() ? cached->second : PcmBuffer();
+}
+#endif
+
+static PcmBuffer loadSound(const std::string &path, float pitch = 1.0f)
 {
 #ifdef VITA_PLATFORM
-    auto cached = s_soundCache.find(path);
-    if (cached != s_soundCache.end())
-        return cached->second;
-    std::vector<float> decoded = loadSoundUncached(path, pitch);
-    if (decoded.empty())
+    if (PcmBuffer hit = cachedSound(path))
+        return hit;
+    PcmBuffer decoded = std::make_shared<const std::vector<float>>(loadSoundUncached(path, pitch));
+    if (decoded->empty())
         return decoded;
-    const std::size_t bytes = decoded.size() * sizeof(float);
+    const std::size_t bytes = decoded->size() * sizeof(float);
     if (bytes > kSoundCacheEntryLimitBytes)
         return decoded;
+    std::lock_guard<std::mutex> lock(s_cacheMutex);
     if (s_soundCacheBytes + bytes > kSoundCacheLimitBytes)
     {
         s_soundCache.clear();
         s_soundCacheBytes = 0;
     }
-    s_soundCache.emplace(path, decoded);
-    s_soundCacheBytes += bytes;
+    if (s_soundCache.emplace(path, decoded).second)
+        s_soundCacheBytes += bytes;
     return decoded;
 #else
-    return loadSoundUncached(path, pitch);
+    return std::make_shared<const std::vector<float>>(loadSoundUncached(path, pitch));
 #endif
 }
 
@@ -196,9 +218,9 @@ static std::vector<float> loadSoundUncached(const std::string &path, float pitch
 }
 
 // Play decoded PCM on the next free channel; returns channel index or -1
-static int playPCM(std::vector<float> pcm, float volume, bool looping, AudioBus bus)
+static int playPCM(PcmBuffer pcm, float volume, bool looping, AudioBus bus)
 {
-    if (pcm.empty()) return -1;
+    if (!pcm || pcm->empty()) return -1;
     std::lock_guard<std::mutex> lock(s_mutex);
     for (int i = 0; i < MAX_SOUNDS; i++)
     {
@@ -216,6 +238,84 @@ static int playPCM(std::vector<float> pcm, float volume, bool looping, AudioBus 
     return -1;
 }
 
+#ifdef VITA_PLATFORM
+// ---- Off-thread sound decode -------------------------------------------------
+// Decoding an uncached sound on the game thread froze that tick for tens of
+// ms. It now decodes on a worker on cores 1-2 and starts when ready; one that
+// would start more than kMaxPlayDelayMs late is dropped. Ambient sets are
+// decoded ahead on the first sound request.
+namespace
+{
+struct DecodeJob
+{
+    std::string path;
+    float volume;
+    bool play;
+    long long requestedMs;
+};
+std::mutex s_jobMutex;
+std::condition_variable s_jobCondition;
+std::deque<DecodeJob> s_jobs;
+std::unordered_set<std::string> s_jobPaths; // queued or decoding
+std::thread s_decodeThread;
+bool s_decodeThreadStarted = false;
+bool s_prewarmQueued = false;
+constexpr std::size_t kMaxQueuedPlays = 12;
+constexpr long long kMaxPlayDelayMs = 600;
+constexpr long long kMaxStepDelayMs = 100;
+
+void decodeWorker()
+{
+    sceKernelChangeThreadCpuAffinityMask(sceKernelGetThreadId(),
+                                         SCE_KERNEL_CPU_MASK_USER_1 | SCE_KERNEL_CPU_MASK_USER_2);
+    for (;;)
+    {
+        DecodeJob job;
+        {
+            std::unique_lock<std::mutex> lock(s_jobMutex);
+            s_jobCondition.wait(lock, [] { return !s_jobs.empty(); });
+            job = std::move(s_jobs.front());
+            s_jobs.pop_front();
+        }
+        PcmBuffer pcm = loadSound(job.path);
+        {
+            std::lock_guard<std::mutex> lock(s_jobMutex);
+            s_jobPaths.erase(job.path);
+        }
+        // A footstep heard late plays mid-jump; drop it instead, as a step
+        // that is out of sync is worse than a missing one.
+        const long long maxDelayMs = job.path.find("step") != std::string::npos ? kMaxStepDelayMs : kMaxPlayDelayMs;
+        if (job.play && pcm && !pcm->empty() &&
+            System::currentTimeMillis() - job.requestedMs <= maxDelayMs)
+            playPCM(std::move(pcm), job.volume, false, AudioBus::Sound);
+    }
+}
+
+// Called on the game thread. `play` jobs go to the front of the queue.
+void queueDecode(const std::string &path, float volume, bool play)
+{
+    std::lock_guard<std::mutex> lock(s_jobMutex);
+    if (s_jobPaths.count(path) != 0)
+        return;
+    if (play && s_jobs.size() >= kMaxQueuedPlays)
+        return;
+    if (!s_decodeThreadStarted)
+    {
+        s_decodeThread = std::thread(decodeWorker);
+        s_decodeThread.detach();
+        s_decodeThreadStarted = true;
+    }
+    s_jobPaths.insert(path);
+    DecodeJob job{path, volume, play, System::currentTimeMillis()};
+    if (play)
+        s_jobs.push_front(std::move(job));
+    else
+        s_jobs.push_back(std::move(job));
+    s_jobCondition.notify_one();
+}
+}
+#endif
+
 static void stopChannel(int idx, AudioBus expectedBus)
 {
     if (idx < 0 || idx >= MAX_SOUNDS) return;
@@ -223,7 +323,7 @@ static void stopChannel(int idx, AudioBus expectedBus)
     if (!s_channels[idx].active || s_channels[idx].bus != expectedBus)
         return;
     s_channels[idx].active = false;
-    s_channels[idx].pcm.clear();
+    s_channels[idx].pcm.reset();
     s_channels[idx].pos = 0;
 }
 
@@ -245,21 +345,22 @@ static void audioCallback(void * /*userdata*/, Uint8 *stream, int len)
             float busVolume = ch.bus == AudioBus::Music ? s_musicVolume : s_soundVolume;
             float vol = ch.volume * busVolume;
 
+            const std::vector<float> &pcm = *ch.pcm;
             for (int f = 0; f < frames; f++)
             {
-                if (ch.pos + 1 >= ch.pcm.size())
+                if (ch.pos + 1 >= pcm.size())
                 {
                     if (ch.looping)
                         ch.pos = 0;
                     else
                     {
                         ch.active = false;
-                        ch.pcm.clear();
+                        ch.pcm.reset();
                         break;
                     }
                 }
-                out[f * 2 + 0] += ch.pcm[ch.pos++] * vol;
-                out[f * 2 + 1] += ch.pcm[ch.pos++] * vol;
+                out[f * 2 + 0] += pcm[ch.pos++] * vol;
+                out[f * 2 + 1] += pcm[ch.pos++] * vol;
             }
         }
     }
@@ -369,7 +470,7 @@ void SoundManager::closeMinecraft()
             ch.active = false;
             ch.looping = false;
             ch.pos = 0;
-            std::vector<float>().swap(ch.pcm);
+            ch.pcm.reset();
         }
         s_musicChannel = -1;
         s_streamingChannel = -1;
@@ -421,8 +522,8 @@ bool SoundManager::playMusicFileNow(const std::string &file)
     }
     else
     {
-        std::vector<float> pcm = loadSound(file);
-        if (pcm.empty())
+        PcmBuffer pcm = loadSound(file);
+        if (pcm->empty())
             return false;
         if (s_musicChannel >= 0)
             stopChannel(s_musicChannel, AudioBus::Music);
@@ -512,8 +613,34 @@ void SoundManager::playStreaming(const jstring &s, float f, float f1, float f2, 
     }
 }
 
+#ifdef VITA_PLATFORM
+// First sound request after the pools are filled: decode the sets that fire
+// during digging, walking and combat before they are asked for. step.*/dig.*
+// are 4-6 short variants per surface; the rest are one-shots. Longer sounds
+// (mob.*, ambient.*) stay on demand.
+static void prewarmSoundPoolEntries(const SoundPool &pool)
+{
+    if (s_prewarmQueued)
+        return;
+    s_prewarmQueued = true;
+    for (const auto &group : pool.nameToSoundPoolEntriesMapping)
+    {
+        const std::string &name = group.first;
+        if (name.rfind("step.", 0) != 0 && name.rfind("dig.", 0) != 0 &&
+            name != "random.pop" && name != "random.click" && name != "random.drr")
+            continue;
+        for (const SoundPoolEntry *entry : group.second)
+            queueDecode(entry->soundUrl, 0.0f, false);
+    }
+}
+#define prewarmSoundPool() prewarmSoundPoolEntries(soundPoolSounds)
+#endif
+
 void SoundManager::playSound(const jstring &s, float f, float f1, float f2, float f3, float f4)
 {
+#ifdef VITA_PLATFORM
+    PlatformTickPhaseScope sndPhase("sndPlay"); // game-thread cost of a sound request
+#endif
     if (!loaded || !options || options->soundVolume == 0.0f) return;
 
     SoundPoolEntry *entry = soundPoolSounds.getRandomSoundFromSoundPool(s);
@@ -524,21 +651,46 @@ void SoundManager::playSound(const jstring &s, float f, float f1, float f2, floa
             return;
 
         const float vol = std::min(f3, 1.0f) * attenuation;
+#ifdef VITA_PLATFORM
+        prewarmSoundPool();
+        PcmBuffer pcm = cachedSound(entry->soundUrl);
+        if (!pcm)
+        {
+            queueDecode(entry->soundUrl, vol, true);
+            return;
+        }
+        playPCM(std::move(pcm), vol, false, AudioBus::Sound);
+#else
         auto pcm = loadSound(entry->soundUrl, f4);
         playPCM(std::move(pcm), vol, false, AudioBus::Sound);
+#endif
     }
 }
 
 void SoundManager::playSoundFX(const jstring &s, float f, float f1)
 {
+#ifdef VITA_PLATFORM
+    PlatformTickPhaseScope sndPhase("sndPlay");
+#endif
     if (!loaded || !options || options->soundVolume == 0.0f) return;
 
     SoundPoolEntry *entry = soundPoolSounds.getRandomSoundFromSoundPool(s);
     if (entry != nullptr)
     {
         float vol = (f > 1.0f ? 1.0f : f) * 0.25f;
+#ifdef VITA_PLATFORM
+        prewarmSoundPool();
+        PcmBuffer pcm = cachedSound(entry->soundUrl);
+        if (!pcm)
+        {
+            queueDecode(entry->soundUrl, vol, true);
+            return;
+        }
+        playPCM(std::move(pcm), vol, false, AudioBus::Sound);
+#else
         auto pcm = loadSound(entry->soundUrl, f1);
         playPCM(std::move(pcm), vol, false, AudioBus::Sound);
+#endif
     }
 }
 
