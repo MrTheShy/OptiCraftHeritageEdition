@@ -377,6 +377,7 @@ target_link_directories(OptiCraft PRIVATE
 
 target_link_libraries(OptiCraft
     gskit dmakit dma graph
+    $<$<VERSION_GREATER:${MC_LOG_LEVEL},0>:eedebug>
     patches pad mc vux
     $<$<BOOL:${PS2_ENABLE_SOUND}>:audsrv>
     z

@@ -9,6 +9,11 @@
 #include "platform/Log.h"
 #include "platform/WorldLoadTrace.h"
 
+#if MC_LOG_LEVEL > 0
+#include <ee_debug.h>
+#include <sio.h>
+#endif
+
 // The PS2 counterpart of src/wii/system/WiiEarlyCrash.cpp, and the same shape.
 //
 // Minecraft::run() catches MinecraftException, bad_alloc, std::exception and
@@ -71,11 +76,62 @@ void terminateHandler()
 }
 }
 
+#if MC_LOG_LEVEL > 0
+// CPU exceptions (bad loads/stores, bus errors) never reach a C++ handler: the
+// EE just stops. This one writes the faulting PC, the caller (ra), the bad
+// address and the top of the stack to the EE serial console, which PCSX2 keeps
+// in emulog.txt (EE console logging on). Map the PCs with build/<dir>/OptiCraft.map.
+// Only raw register writes here: the heap, newlib and the log may be what broke.
+namespace
+{
+void sioHex(const char *label, u32 value)
+{
+	static const char digits[] = "0123456789abcdef";
+	sio_putsn(label);
+	char out[9];
+	for (int i = 0; i < 8; ++i)
+		out[i] = digits[(value >> (28 - 4 * i)) & 0xf];
+	out[8] = '\0';
+	sio_putsn(out);
+}
+
+int cpuExceptionHandler(EE_RegFrame *frame)
+{
+	sio_putsn("\n[CRASH]");
+	sioHex(" cause=", frame->cause);
+	sioHex(" epc=", frame->epc);
+	sioHex(" ra=", frame->ra[0]);
+	sioHex(" badvaddr=", frame->badvaddr);
+	sioHex(" sp=", frame->sp[0]);
+	sio_puts("");
+	// Return addresses saved further up the stack: candidates for the call chain.
+	const u32 sp = frame->sp[0];
+	if (sp >= 0x00100000u && sp < 0x02000000u - 256u)
+	{
+		sio_putsn("[CRASH] stack");
+		const u32 *words = reinterpret_cast<const u32 *>(sp);
+		for (int i = 0; i < 64; ++i)
+			if (words[i] >= 0x00100000u && words[i] < 0x00800000u) // EE user code starts at 1 MB
+				sioHex(" ", words[i]);
+		sio_puts("");
+	}
+	for (;;)
+		;
+	return 0;
+}
+}
+#endif
+
 namespace Ps2EarlyCrash
 {
 void install()
 {
 	std::set_terminate(terminateHandler);
+#if MC_LOG_LEVEL > 0
+	ee_dbg_install(1);
+	for (int cause = 1; cause <= 7; ++cause) // TLB mod/load/store, address error, bus error
+		ee_dbg_set_level1_handler(cause, cpuExceptionHandler);
+#endif
 }
 }
 
