@@ -1,5 +1,6 @@
 #define SDL_MAIN_HANDLED
 #include "SDL.h"
+#include "platform/Trophies.h"
 
 #include <cctype>
 #include <cstring>
@@ -178,6 +179,7 @@ int main(int argc, char *argv[])
 	pcRenderBackendSetRequested(loadRenderBackendPreference());
 	lwjgl::GLContext::setRequestedSamples(loadOptiFineAaLevel());
 	lwjgl::GLContext::instantiate();
+	PlatformTrophies::init();
 #if PLATFORM_PC_LEGACY
 	Tessellator::convertQuadsToTriangles = !pcRenderBackendIsDirect3D9();
 #endif

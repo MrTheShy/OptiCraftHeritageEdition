@@ -114,6 +114,7 @@ target_link_libraries(OptiCraft PRIVATE
     SceSysmodule_stub
     SceIofilemgr_stub
     SceCommonDialog_stub
+    SceNpTrophy_stub
     SceTouch_stub
     SceHid_stub
     SceMotion_stub
@@ -128,12 +129,24 @@ target_link_libraries(OptiCraft PRIVATE
 )
 
 vita_create_self(eboot.bin OptiCraft UNSAFE)
+
+# Trophy set built by vita/trophies/make_trophies.py from the game assets.
+# Not in the repo (it holds Mojang textures): pass its path to include it.
+set(VITA_TROPHY_TRP "" CACHE FILEPATH "TROPHY.TRP to ship in sce_sys (optional)")
+# LiveArea art (8-bit palette PNGs, as the firmware requires).
+set(VITA_SCE_SYS ${PROJECT_SOURCE_DIR}/vita/sce_sys)
+set(VITA_VPK_EXTRA_FILES
+    FILE ${VITA_SCE_SYS}/icon0.png sce_sys/icon0.png
+    FILE ${VITA_SCE_SYS}/pic0.png sce_sys/pic0.png
+    FILE ${VITA_SCE_SYS}/livearea/contents/bg.png sce_sys/livearea/contents/bg.png
+    FILE ${VITA_SCE_SYS}/livearea/contents/startup.png sce_sys/livearea/contents/startup.png
+    FILE ${VITA_SCE_SYS}/livearea/contents/template.xml sce_sys/livearea/contents/template.xml
+)
+if(VITA_TROPHY_TRP AND EXISTS "${VITA_TROPHY_TRP}")
+    list(APPEND VITA_VPK_EXTRA_FILES FILE "${VITA_TROPHY_TRP}" sce_sys/trophy/${VITA_TITLEID}_00/TROPHY.TRP)
+endif()
 vita_create_vpk(${VITA_APP_NAME}.vpk ${VITA_TITLEID} eboot.bin
     VERSION ${VITA_VERSION}
     NAME ${VITA_APP_NAME}
-    FILE ${CMAKE_CURRENT_SOURCE_DIR}/vita/sce_sys/icon0.png sce_sys/icon0.png
-    FILE ${CMAKE_CURRENT_SOURCE_DIR}/vita/sce_sys/pic0.png sce_sys/pic0.png
-    FILE ${CMAKE_CURRENT_SOURCE_DIR}/vita/sce_sys/livearea/contents/bg.png sce_sys/livearea/contents/bg.png
-    FILE ${CMAKE_CURRENT_SOURCE_DIR}/vita/sce_sys/livearea/contents/startup.png sce_sys/livearea/contents/startup.png
-    FILE ${CMAKE_CURRENT_SOURCE_DIR}/vita/sce_sys/livearea/contents/template.xml sce_sys/livearea/contents/template.xml
+    ${VITA_VPK_EXTRA_FILES}
 )

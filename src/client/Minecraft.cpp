@@ -1,4 +1,5 @@
 #include "net/minecraft/src/WorldSettings.h"
+#include "platform/Trophies.h"
 #include "net/minecraft/src/WorldType.h"
 #include "net/minecraft/src/WorldInfo.h"
 #include "net/minecraft/src/NBTTagCompound.h"
@@ -665,6 +666,11 @@ void Minecraft::startGame()
     entityRenderer = new EntityRenderer(this);
     RenderManager::instance->itemRenderer = new ItemRenderer(this);
     statFileWriter = new StatFileWriter(session, mcDataDir->toString());
+    // Achievements earned before trophies existed (or on another console
+    // install) get their trophy now; already-unlocked ones are skipped.
+    for (Achievement *achievement : AchievementList::achievementList)
+        if (statFileWriter->hasAchievementUnlocked(achievement))
+            PlatformTrophies::unlockAchievement(achievement->statId - 0x500000);
     AchievementList::openInventory->setStatStringFormatter(new StatStringFormatKeyInv(this));
     PLATFORM_BOOT_LOG(PLATFORM_BOOT_PREFIX " render helpers ready\n");
 

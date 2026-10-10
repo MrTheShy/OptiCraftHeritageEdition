@@ -1,4 +1,5 @@
 #include "EntityPlayerSP.h"
+#include "platform/Trophies.h"
 
 #include "GameSettings.h"
 #include "skin/SkinManager.h"
@@ -490,7 +491,10 @@ void EntityPlayerSP::addStat(StatBase *statbase, int_t i)
 		if (achievement->parentAchievement == nullptr || mc->statFileWriter->hasAchievementUnlocked(achievement->parentAchievement))
 		{
 			if (!mc->statFileWriter->hasAchievementUnlocked(achievement))
+			{
 				mc->guiAchievement->queueTakenAchievement(achievement);
+				PlatformTrophies::unlockAchievement(achievement->statId - 0x500000);
+			}
 			mc->statFileWriter->readStat(statbase, i);
 		}
 	}
