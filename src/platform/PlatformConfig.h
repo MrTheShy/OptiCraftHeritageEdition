@@ -363,6 +363,20 @@ declares."
 #  endif
 #endif
 
+// Sign text is laid out once per sign into a captured CPU mesh and replayed,
+// instead of glyph by glyph every frame (Vita: 0.7 ms per sign, 8 ms for a
+// server spawn). Needs PLATFORM_FONT_IMMEDIATE (captureTextBatch); without it
+// the capture fails and signs take the plain path.
+#ifndef PLATFORM_SIGN_TEXT_CACHE
+#  define PLATFORM_SIGN_TEXT_CACHE 0
+#endif
+
+// Load the container GUI textures when a world is entered rather than on the
+// first open of each screen (one PNG decode + upload each, 8-50 ms on Vita).
+#ifndef PLATFORM_PRECACHE_GUI_TEXTURES
+#  define PLATFORM_PRECACHE_GUI_TEXTURES 0
+#endif
+
 // Backends without a persistent geometry object submit ModelRenderer boxes from
 // their current transform. Wii and PS2 are both excluded: Wii compiles each box
 // once into a native GX display list, PS2 into a captured RAM mesh, and both

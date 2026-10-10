@@ -2,6 +2,10 @@
 #include "platform/ExtendedProfiler.h"
 #include "RenderEngine.h"
 #include "platform/Log.h"
+#include "platform/Profiler.h"
+#include "java/System.h"
+#include "pc/render/VitaTerrainBatch.h"
+#include "pc/render/VitaModelBatch.h"
 #include "platform/PlatformConfig.h"
 #include "platform/TextureResidencyPolicy.h"
 #include "legacy/LegacyPanoramaUpload.h"
@@ -454,7 +458,12 @@ bool RenderEngine::loadTextureStreamInto(const std::string &s, int_t texture, st
 		// while the flags are still set; reset them AFTER (as Java does), not inside the branch above.
 		BufferedImage *uploadImage = image ? image.get() : missingTextureImage.get();
 		if (image && normalizedPath == "/terrain.png")
+		{
 			Config::setIconWidthTerrain(image->getWidth() / 16);
+#if PLATFORM_TERRAIN_VBO_BATCH
+			vitaTerrainSetAtlas(image->getRawPixels(), image->getWidth(), image->getHeight());
+#endif
+		}
 		else if (image && normalizedPath == "/gui/items.png")
 			Config::setIconWidthItems(image->getWidth() / 16);
 		setupTexture(uploadImage, texture, isTileAtlasResource(s), isTerrainAlphaFixResource(s));
@@ -885,6 +894,9 @@ void RenderEngine::setupTexture(BufferedImage *bufferedimage, int_t texture, boo
 		pixels[i * 4u + 2] = (unsigned char)b;
 		pixels[i * 4u + 3] = (unsigned char)a;
 	}
+#if PLATFORM_MODEL_GPU_BATCH
+	vitaModelTrackTextureAlpha(texture, width, height, pixels.data());
+#endif
 
 	// The INTERNAL format -- the third argument -- is the one that decides what
 	// the texture costs once it is uploaded; the source data stays RGBA8 either
@@ -1015,11 +1027,18 @@ void RenderEngine::updateTextureSubImageRegion(int_t texture, int_t x, int_t y, 
 
 	const int_t mipmapLevel = resolveMipmapLevel(Config::getMipmapLevel(), targetWidth, targetHeight);
 	renderBindTexture(texture);
-	renderTextureParameters(blurTexture, mipmapLevel > 0, clampTexture);
+	if (!dynamicTextureBatch || dynamicTextureParamsSet != texture)
+	{
+		renderTextureParameters(blurTexture, mipmapLevel > 0, clampTexture);
 #if PLATFORM_TEXTURE_QUALITY_CONTROLS
-	renderApplyTextureQuality(blurTexture, mipmapLevel, Config::isMipmapLinear(), Config::getAnisotropicFilterLevel());
+		renderApplyTextureQuality(blurTexture, mipmapLevel, Config::isMipmapLinear(), Config::getAnisotropicFilterLevel());
 #endif
+		if (dynamicTextureBatch)
+			dynamicTextureParamsSet = texture;
+	}
 	renderTextureSubImageRgba(0, x, y, width, height, pixels);
+	if (mipmapLevel <= 0)
+		return;
 
 	std::vector<byte_t> previous(pixels, pixels + static_cast<std::size_t>(width) * static_cast<std::size_t>(height) * 4u);
 	int_t previousWidth = width;
@@ -1440,17 +1459,19 @@ void RenderEngine::uploadTextureFxTile(TextureFX *texturefx, int_t texture, int_
 		return;
 
 	tileWidth = Config::limit(tileWidth, 1, Config::getMaxDynamicTileWidth());
-	std::vector<byte_t> scaled(static_cast<std::size_t>(tileWidth) * static_cast<std::size_t>(tileWidth) * 4u);
-	for (int_t y = 0; y < tileWidth; ++y)
+	const byte_t *pixels = texturefx->imageData;
+	if (tileWidth != 16)
 	{
-		const int_t sourceY = y * 16 / tileWidth;
-		for (int_t x = 0; x < tileWidth; ++x)
+		// Nearest-neighbour rescale for HD packs, into a buffer kept across calls.
+		textureFxScratch.resize(static_cast<std::size_t>(tileWidth) * static_cast<std::size_t>(tileWidth) * 4u);
+		byte_t *dst = textureFxScratch.data();
+		for (int_t y = 0; y < tileWidth; ++y)
 		{
-			const int_t sourceX = x * 16 / tileWidth;
-			const std::size_t src = (static_cast<std::size_t>(sourceY) * 16u + static_cast<std::size_t>(sourceX)) * 4u;
-			const std::size_t dst = (static_cast<std::size_t>(y) * static_cast<std::size_t>(tileWidth) + static_cast<std::size_t>(x)) * 4u;
-			std::memcpy(&scaled[dst], &texturefx->imageData[src], 4u);
+			const byte_t *row = texturefx->imageData + (y * 16 / tileWidth) * 64;
+			for (int_t x = 0; x < tileWidth; ++x, dst += 4)
+				std::memcpy(dst, row + (x * 16 / tileWidth) * 4, 4u);
 		}
+		pixels = textureFxScratch.data();
 	}
 
 	for (int_t tileX = 0; tileX < texturefx->tileSize; ++tileX)
@@ -1459,7 +1480,7 @@ void RenderEngine::uploadTextureFxTile(TextureFX *texturefx, int_t texture, int_
 		{
 			const int_t x = (texturefx->iconIndex % 16) * tileWidth + tileX * tileWidth;
 			const int_t y = (texturefx->iconIndex / 16) * tileWidth + tileY * tileWidth;
-			updateTextureSubImageRegion(texture, x, y, tileWidth, tileWidth, scaled.data());
+			updateTextureSubImageRegion(texture, x, y, tileWidth, tileWidth, pixels);
 		}
 	}
 }
@@ -1773,6 +1794,11 @@ void RenderEngine::updateDynamicTextures()
 	const int_t itemsTexture = getTexture("/gui/items.png");
 	syncCustomAnimationTileWidths();
 	++dynamicTextureTickCounter;
+	dynamicTextureBatch = true;
+	dynamicTextureParamsSet = -1;
+#if PLATFORM_PROFILE_RENDER_PHASES
+	long long fxTickNs = 0, fxUploadNs = 0;
+#endif
 
 	for (TextureFX *texturefx : textureList)
 	{
@@ -1836,6 +1862,7 @@ void RenderEngine::updateDynamicTextures()
 	}
 
 	updateCustomAnimations();
+	dynamicTextureBatch = false;
 	dynamicTexturesUpdated = true;
 }
 

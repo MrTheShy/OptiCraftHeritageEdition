@@ -7,6 +7,32 @@
 #include "FontRenderer.h"
 #include "ModelRenderer.h"
 
+namespace
+{
+void drawSignText(FontRenderer *fontrenderer, TileEntitySign *tileentitysign)
+{
+    for (int k = 0; k < 4; k++)
+    {
+        std::string s = tileentitysign->signText[k];
+        if (k == tileentitysign->lineBeingEdited)
+            s = "> " + s + " <";
+        fontrenderer->drawString(s, -fontrenderer->getStringWidth(s) / 2, k * 10 - 20, 0);
+    }
+}
+
+#if PLATFORM_SIGN_TEXT_CACHE
+// A section sign (UTF-8 C2 A7) may carry the obfuscated code, which picks new
+// glyphs every frame: such text is never treated as cached.
+bool signTextObfuscated(const TileEntitySign *tileentitysign)
+{
+    for (int k = 0; k < 4; k++)
+        if (tileentitysign->signText[k].find("\xC2\xA7") != std::string::npos)
+            return true;
+    return false;
+}
+#endif
+}
+
 TileEntitySignRenderer::TileEntitySignRenderer()
     : signModel(new SignModel())
 {
@@ -66,13 +92,31 @@ bool TileEntitySignRenderer::renderTileEntitySignParts(TileEntitySign *tileentit
             renderScale(f4, -f4, f4);
             renderNormal3f(0.0f, 0.0f, -1.0f * f4);
             renderDepthMask(false);
-            for (int k = 0; k < 4; k++)
+#if PLATFORM_SIGN_TEXT_CACHE
+            // Lay the text out once and replay the captured glyphs through the
+            // same client-array draw as the uncached path. The earlier cache
+            // replayed a per-sign display list (a VBO on Vita), which changed
+            // vitaGL's buffer/attribute state and made the sky flicker.
+            const unsigned int fontRevision = fontrenderer->getTextCacheRevision();
+            bool cached = !tileentitysign->textMeshStale(fontRevision);
+            if (!cached)
             {
-                std::string s = tileentitysign->signText[k];
-                if (k == tileentitysign->lineBeingEdited)
-                    s = "> " + s + " <";
-                fontrenderer->drawString(s, -fontrenderer->getStringWidth(s) / 2, k * 10 - 20, 0);
+                tileentitysign->textMesh.clear();
+                fontrenderer->beginTextBatch();
+                drawSignText(fontrenderer, tileentitysign);
+                // False for blank signs and underline/strikethrough runs; both
+                // take the plain path below.
+                cached = fontrenderer->captureTextBatch(tileentitysign->textMesh);
+                if (cached)
+                    tileentitysign->markTextMeshDrawn(signTextObfuscated(tileentitysign) ? 0u : fontRevision);
             }
+            if (cached)
+                fontrenderer->drawCapturedText(tileentitysign->textMesh);
+            else
+                drawSignText(fontrenderer, tileentitysign);
+#else
+            drawSignText(fontrenderer, tileentitysign);
+#endif
             renderDepthMask(true);
         }
     }

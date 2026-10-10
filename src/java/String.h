@@ -114,6 +114,8 @@ inline jstring fromInt(int_t v) { return toString(v); }
 
 // Java String semantics while jstring remains UTF-8 internally.
 std::vector<char_t> toUtf16(const jstring &value);
+// Same, into a caller-owned buffer whose capacity is reused (no allocation once warm).
+void toUtf16(const std::string &value, std::vector<char_t> &out);
 jstring fromUtf16(const std::vector<char_t> &value);
 int_t utf16Length(const jstring &value);
 jstring substringUtf16(const jstring &value, int_t beginIndex, int_t endIndex);

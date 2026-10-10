@@ -15,6 +15,9 @@ public:
 	static void update(RenderEngine *engine);
 	static int_t getConnectedTexture(IBlockAccess *blockAccess, Block *block, int_t x, int_t y, int_t z, int_t side, int_t tileNum);
 	static bool isConnectedGlassPanes();
+	// The option is on and the pack gives at least one block or tile a CTM
+	// method (without one getConnectedTexture() never changes a texture).
+	static bool isActive();
 	static int_t getTerrainTextureId();
 	static int_t getCtmTextureId();
 	static int_t getGlassPaneTexture(bool linkP, bool linkN, bool linkYp, bool linkYn);

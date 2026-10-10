@@ -18,6 +18,9 @@
 #include <cstring>
 
 #ifdef VITA_PLATFORM
+#include <psp2/gxm.h>
+extern "C" SceGxmTexture *vglGetGxmTexture(GLenum target);
+extern "C" void *vglGetTexDataPointer(GLenum target);
 #include <functional>
 #include <memory>
 #include <utility>
@@ -490,6 +493,39 @@ void renderDeleteTextures(int count, const int *textures)
 
 void renderTextureSubImageRgba(int level, int x, int y, int width, int height, const void *pixels)
 {
+    VITA_PERF_COUNT(g_vitaPerfTexUploads, 1);
+#ifdef VITA_PLATFORM
+    // Animated tiles (water, lava, fire, portal, compass, clock: ~13 a tick)
+    // are written straight into the bound RGBA8 linear texture. Through
+    // glTexSubImage2D vitaGL protects a texture the GPU may still read, which
+    // cost ~5.7 ms a tick here (fxUpload); a tile the GPU samples mid-write is
+    // at worst one animation frame off. Anything else keeps the GL path.
+    if (level == 0 && pixels != nullptr)
+    {
+        SceGxmTexture *gxm = vglGetGxmTexture(GL_TEXTURE_2D);
+        std::uint8_t *base = static_cast<std::uint8_t *>(vglGetTexDataPointer(GL_TEXTURE_2D));
+        if (gxm != nullptr && base != nullptr &&
+            sceGxmTextureGetFormat(gxm) == SCE_GXM_TEXTURE_FORMAT_U8U8U8U8_ABGR)
+        {
+            const SceGxmTextureType type = sceGxmTextureGetType(gxm);
+            const unsigned texWidth = sceGxmTextureGetWidth(gxm);
+            unsigned stride = 0;
+            if (type == SCE_GXM_TEXTURE_LINEAR_STRIDED)
+                stride = sceGxmTextureGetStride(gxm);
+            else if (type == SCE_GXM_TEXTURE_LINEAR)
+                stride = ((texWidth + 7u) & ~7u) * 4u;
+            if (stride != 0 && x >= 0 && y >= 0 && (unsigned)(x + width) <= texWidth &&
+                (unsigned)(y + height) <= sceGxmTextureGetHeight(gxm))
+            {
+                const std::uint8_t *src = static_cast<const std::uint8_t *>(pixels);
+                for (int row = 0; row < height; ++row)
+                    std::memcpy(base + (std::size_t)(y + row) * stride + (std::size_t)x * 4u,
+                                src + (std::size_t)row * (std::size_t)width * 4u, (std::size_t)width * 4u);
+                return;
+            }
+        }
+    }
+#endif
     glTexSubImage2D(GL_TEXTURE_2D, level, x, y, width, height,
                     GL_RGBA, GL_UNSIGNED_BYTE, pixels);
 }
@@ -536,16 +572,24 @@ void renderApplyTextureQuality(bool blur, int mipmapLevel, bool mipmapLinear, in
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, blur ? GL_LINEAR : GL_NEAREST);
     // Only the selected chain is uploaded. Clamp sampling to that chain so a
     // texture does not become incomplete by implicitly requiring lower levels.
-    if (desktopHasOpenGL12())
+    // Context facts, queried once: this runs for every animated texture tile,
+    // and the version parse plus extension-string search cost real time on Vita.
+    static const bool hasOpenGL12 = desktopHasOpenGL12();
+    static const bool hasAnisotropy = SDL_GL_ExtensionSupported("GL_EXT_texture_filter_anisotropic") == SDL_TRUE;
+    if (hasOpenGL12)
     {
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_BASE_LEVEL, 0);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, mipmapLevel > 0 ? mipmapLevel : 0);
     }
 
-    if (SDL_GL_ExtensionSupported("GL_EXT_texture_filter_anisotropic") == SDL_TRUE)
+    if (hasAnisotropy)
     {
-        GLfloat maximum = 1.0f;
-        glGetFloatv(GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT, &maximum);
+        static GLfloat maximum = 0.0f;
+        if (maximum <= 0.0f)
+        {
+            maximum = 1.0f;
+            glGetFloatv(GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT, &maximum);
+        }
         const GLfloat requested = static_cast<GLfloat>(anisotropy < 1 ? 1 : anisotropy);
         glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY_EXT,
                         requested < maximum ? requested : maximum);

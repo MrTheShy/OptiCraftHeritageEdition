@@ -1,6 +1,8 @@
 #include "FontRenderer.h"
 
 #include <algorithm>
+#include <array>
+#include <cstdint>
 #include <cctype>
 #include <sstream>
 #include <cmath>
@@ -369,8 +371,9 @@ float_t FontRenderer::renderStringScaled(const std::string &s, float_t x, float_
 			currentR, currentG, currentB, currentA});
 	};
 
-	const std::vector<char_t> units = String::toUtf16(jstring(s));
-	const std::string formatCodes = "0123456789abcdefklmnor";
+	std::vector<char_t> &units = drawUnits;
+	String::toUtf16(s, units);
+	static const std::string formatCodes = "0123456789abcdefklmnor";
 
 #if PLATFORM_FONT_IMMEDIATE
 	const bool ownsBatch = !textBatchActive;
@@ -593,7 +596,8 @@ int_t FontRenderer::getStringWidth(const std::string &s)
 {
 	if (s.empty())
 		return 0;
-	const std::vector<char_t> units = String::toUtf16(jstring(s));
+	std::vector<char_t> &units = widthUnits;
+	String::toUtf16(s, units);
 	float_t width = 0.0f;
 	bool bold = false;
 	for (std::size_t index = 0; index < units.size(); ++index)
@@ -774,7 +778,23 @@ std::vector<std::string> FontRenderer::split(const std::string &s, char delimite
 
 int_t FontRenderer::getCharIndex(char_t c)
 {
-	return String::indexOfUtf16Unit(ChatAllowedCharacters::allowedCharacters(), c);
+	// Called per glyph. The character list is fixed for the process, so decode
+	// it once and index Latin-1 through a table instead of copying and decoding
+	// the whole list on every glyph.
+	static const std::vector<char_t> allowed = String::toUtf16(jstring(ChatAllowedCharacters::allowedCharacters()));
+	static const std::array<std::int16_t, 256> latin = []
+	{
+		std::array<std::int16_t, 256> table;
+		table.fill(-1);
+		for (std::size_t i = allowed.size(); i-- > 0;)
+			if (allowed[i] < 256u)
+				table[allowed[i]] = static_cast<std::int16_t>(i);
+		return table;
+	}();
+	if (c < 256u)
+		return latin[c];
+	const auto it = std::find(allowed.begin(), allowed.end(), c);
+	return it == allowed.end() ? -1 : static_cast<int_t>(it - allowed.begin());
 }
 
 void FontRenderer::setUnicodeFlag(bool unicode)

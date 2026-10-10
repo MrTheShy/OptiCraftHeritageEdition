@@ -21,8 +21,13 @@ void Timer::updateTimer()
 {
 	long_t l = System::currentTimeMillis();
 	long_t l1 = JavaArithmetic::longSub(l, lastSyncSysClock);
-	long_t l2 = System::nanoTime() / 0xf4240LL;
-	double d = (double)l2 / 1000.0;
+	const long_t nowNs = System::nanoTime();
+	long_t l2 = nowNs / 0xf4240LL;
+	// Full-resolution seconds. The whole-millisecond value l2 still drives the
+	// sys-clock drift correction below (as in Java), but the frame delta used
+	// to be truncated to it: at 60 fps a 16.7 ms frame measured 16 or 17 ms,
+	// which shows up as partial-tick jitter in the interpolated motion.
+	double d = (double)nowNs / 1.0e9;
 	if (l1 > 1000LL)
 	{
 		lastHRTime = d;
@@ -71,7 +76,7 @@ void Timer::updateTimer()
 	{
 		elapsedTicks = 1;
 	}
-#elif defined(WII_PLATFORM)
+#elif defined(WII_PLATFORM) || defined(VITA_PLATFORM)
 	// Bound catch-up work so one slow chunk or mesh frame cannot queue enough
 	// simulation work to cause a self-sustaining sequence of long frames.
 	if (elapsedTicks > 2)

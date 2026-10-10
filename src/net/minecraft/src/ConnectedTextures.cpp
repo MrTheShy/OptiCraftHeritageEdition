@@ -97,6 +97,11 @@ void ConnectedTextures::update(RenderEngine *engine)
 	}
 }
 
+bool ConnectedTextures::isActive()
+{
+	return Config::isConnectedTextures() && (hasBlockProperties || hasTerrainProperties);
+}
+
 int_t ConnectedTextures::getTerrainTextureId()
 {
 	return renderEngine != nullptr ? renderEngine->getTexture("/terrain.png") : 0;

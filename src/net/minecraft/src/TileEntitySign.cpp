@@ -2,6 +2,26 @@
 #include "java/String.h"
 #include "NBTTagCompound.h"
 
+#if PLATFORM_SIGN_TEXT_CACHE
+bool TileEntitySign::textMeshStale(unsigned int fontRevision) const
+{
+    if (textMeshFont != fontRevision || textMeshEditLine != lineBeingEdited)
+        return true;
+    for (int k = 0; k < 4; k++)
+        if (textMeshText[k] != signText[k])
+            return true;
+    return false;
+}
+
+void TileEntitySign::markTextMeshDrawn(unsigned int fontRevision)
+{
+    for (int k = 0; k < 4; k++)
+        textMeshText[k] = signText[k];
+    textMeshEditLine = lineBeingEdited;
+    textMeshFont = fontRevision;
+}
+#endif
+
 TileEntitySign::TileEntitySign() {
     signText[0] = "";
     signText[1] = "";

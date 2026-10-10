@@ -196,6 +196,13 @@ static void appendCodePointUtf16(std::vector<char_t> &out, std::uint32_t cp)
 std::vector<char_t> toUtf16(const jstring &value)
 {
 	std::vector<char_t> out;
+	toUtf16(value, out);
+	return out;
+}
+
+void toUtf16(const std::string &value, std::vector<char_t> &out)
+{
+	out.clear();
 	out.reserve(value.size());
 	for (std::size_t i = 0; i < value.size();)
 	{
@@ -239,7 +246,6 @@ std::vector<char_t> toUtf16(const jstring &value)
 		appendCodePointUtf16(out, cp);
 		i += count;
 	}
-	return out;
 }
 
 static void appendUtf8(jstring &out, std::uint32_t cp)

@@ -544,7 +544,17 @@ void GuiIngame::renderPlayerStatusHudGeometry(int_t sw, int_t sh, Tessellator *c
 
 void GuiIngame::renderPlayerStatusHudUncached(int_t sw, int_t sh)
 {
+#ifdef VITA_PLATFORM
+	// All the icons in one draw instead of one per icon (40-55): same vertices
+	// in the same order, one texture and state, and a draw rasterises and
+	// blends its quads in submission order, so the image is the same.
+	Tessellator &tessellator = Tessellator::instance;
+	tessellator.startDrawingQuads();
+	renderPlayerStatusHudGeometry(sw, sh, &tessellator);
+	tessellator.draw();
+#else
 	renderPlayerStatusHudGeometry(sw, sh, nullptr);
+#endif
 }
 
 #if PLATFORM_PC_LEGACY
@@ -570,6 +580,21 @@ void GuiIngame::pcLegacyEnsureHudCacheLists(int_t sw, int_t sh)
 
 void GuiIngame::pcLegacyRenderHotbarFrame(int_t sw, int_t sh, int_t currentItem)
 {
+	auto drawFrame = [&]()
+	{
+		zLevel = -90.0f;
+#ifdef VITA_PLATFORM
+		// Bar and selection box in one draw, box last as before.
+		Tessellator &tessellator = Tessellator::instance;
+		tessellator.startDrawingQuads();
+		appendTexturedModalRect(tessellator, zLevel, sw / 2 - 91, sh - 22, 0, 0, 182, 22);
+		appendTexturedModalRect(tessellator, zLevel, (sw / 2 - 91 - 1) + currentItem * 20, sh - 23, 0, 22, 24, 22);
+		tessellator.draw();
+#else
+		drawTexturedModalRect(sw / 2 - 91, sh - 22, 0, 0, 182, 22);
+		drawTexturedModalRect((sw / 2 - 91 - 1) + currentItem * 20, sh - 23, 0, 22, 24, 22);
+#endif
+	};
 #if PC_LEGACY_HUD_DISPLAY_LIST_CACHE
 	pcLegacyEnsureHudCacheLists(sw, sh);
 	if (pcLegacyHudDisplayLists != 0)
@@ -578,9 +603,7 @@ void GuiIngame::pcLegacyRenderHotbarFrame(int_t sw, int_t sh, int_t currentItem)
 		{
 			pcLegacyHotbarItem = currentItem;
 			renderBeginDisplayList(pcLegacyHudDisplayLists);
-			zLevel = -90.0f;
-			drawTexturedModalRect(sw / 2 - 91, sh - 22, 0, 0, 182, 22);
-			drawTexturedModalRect((sw / 2 - 91 - 1) + currentItem * 20, sh - 23, 0, 22, 24, 22);
+			drawFrame();
 			renderEndDisplayList();
 			pcLegacyHotbarValid = true;
 		}
@@ -588,9 +611,7 @@ void GuiIngame::pcLegacyRenderHotbarFrame(int_t sw, int_t sh, int_t currentItem)
 		return;
 	}
 #endif
-	zLevel = -90.0f;
-	drawTexturedModalRect(sw / 2 - 91, sh - 22, 0, 0, 182, 22);
-	drawTexturedModalRect((sw / 2 - 91 - 1) + currentItem * 20, sh - 23, 0, 22, 24, 22);
+	drawFrame();
 }
 
 void GuiIngame::pcLegacyRenderCrosshair(int_t sw, int_t sh)
@@ -809,9 +830,12 @@ void GuiIngame::renderGameOverlay(float_t partialTick, bool showDebug, int_t mou
 	drawTexturedModalRect((sw / 2 - 91 - 1) + inv->currentItem * 20, hudHeight - 22 - 1, 0, 22, 24, 22);
 #endif
 
+	// Hearts, armour, food and XP below draw from icons.png too: bind it even
+	// when a screen is open and the crosshair is skipped, or they come out of
+	// gui.png (the hotbar texture) behind the pause menu.
+	renderBindTexture(mc->renderEngine->getTexture("/gui/icons.png"));
 	if (!showDebug)
 	{
-		renderBindTexture(mc->renderEngine->getTexture("/gui/icons.png"));
 		renderEnable(RenderCapability::Blend);
 		renderBlendFunc(RenderBlendFactor::OneMinusDstColor, RenderBlendFactor::OneMinusSrcColor);
 #if PLATFORM_PC_LEGACY
@@ -928,27 +952,40 @@ void GuiIngame::renderGameOverlay(float_t partialTick, bool showDebug, int_t mou
 	// Anchored to hudHeight, not sh: the Legacy HUD lifts the hotbar and the
 	// status bars by legacyHudBottomInset(), and the chat has to keep sitting
 	// above them rather than on top of the hearts.
-	renderTranslate(0.0f, (float_t)(hudHeight - 48), 0.0f);
-	for (int_t i5 = 0; i5 + chatScroll < (int_t)chatMessageList.size() && i5 < chatLines; i5++)
+	renderTranslate(0.0f, (float_t)(hudHeight - 48 - (chatOpen ? GuiChat::keyboardInset(mc, sh) : 0)), 0.0f);
+	// Backgrounds first, then every line's text in one batch: one draw for the
+	// whole chat instead of a rectangle and two text draws per line. Rows do
+	// not overlap, so the result is the same as interleaving them.
+	auto chatAlpha = [&](const ChatLine *line) -> int_t
 	{
-		ChatLine *line = chatMessageList[i5 + chatScroll];
-		if (line->updateCounter >= 200 && !chatOpen) continue;
+		if (line->updateCounter >= 200 && !chatOpen) return 0;
 		float d = static_cast<float>(line->updateCounter) / 200.0f;
 		d = 1.0f - d;
 		d *= 10.0f;
 		if (d < 0.0f) d = 0.0f;
 		if (d > 1.0f) d = 1.0f;
 		d *= d;
-		int_t msgAlpha = static_cast<int_t>(255.0f * d);
-		if (chatOpen) msgAlpha = 255;
-		if (msgAlpha > 0)
+		return chatOpen ? 255 : static_cast<int_t>(255.0f * d);
+	};
+	for (int pass = 0; pass < 2; pass++)
+	{
+		if (pass == 1)
+			fr->beginTextBatch();
+		for (int_t i5 = 0; i5 + chatScroll < (int_t)chatMessageList.size() && i5 < chatLines; i5++)
 		{
-			int_t cx = 2;
-			int_t cy = -i5 * 9;
-			drawRect(cx, cy - 1, cx + 320, cy + 8, JavaArithmetic::intShl(msgAlpha / 2, 24));
-			renderEnable(RenderCapability::Blend);
-			fr->drawStringWithShadow(line->message, cx, cy, JavaArithmetic::intAdd(0xffffff, JavaArithmetic::intShl(msgAlpha, 24)));
+			ChatLine *line = chatMessageList[i5 + chatScroll];
+			const int_t msgAlpha = chatAlpha(line);
+			if (msgAlpha <= 0)
+				continue;
+			const int_t cx = 2;
+			const int_t cy = -i5 * 9;
+			if (pass == 0)
+				drawRect(cx, cy - 1, cx + 320, cy + 8, JavaArithmetic::intShl(msgAlpha / 2, 24));
+			else
+				fr->drawStringWithShadow(line->message, cx, cy, JavaArithmetic::intAdd(0xffffff, JavaArithmetic::intShl(msgAlpha, 24)));
 		}
+		if (pass == 1)
+			fr->endTextBatch();
 	}
 	renderPopMatrix();
 

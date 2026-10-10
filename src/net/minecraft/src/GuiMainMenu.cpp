@@ -258,7 +258,8 @@ void GuiMainMenu::initGui()
     viewportTexture = -1;
     legacyPanoramaAvailable = mc->gameSettings != nullptr && mc->gameSettings->legacyUI &&
         mc->renderEngine != nullptr && mc->renderEngine->hasResource(legacyPanoramaResourcePath());
-#if !PLATFORM_PS2 && !PLATFORM_WII
+#if !PLATFORM_PS2 && !PLATFORM_WII && !defined(VITA_PLATFORM)
+    // Vita draws the panorama directly: the blur costs 8 framebuffer copies per frame.
     if (!legacyPanoramaAvailable)
     {
         BufferedImage viewportImage(256, 256);
@@ -466,6 +467,9 @@ void GuiMainMenu::renderSkybox(int_t mouseX, int_t mouseY, float_t partialTick)
             ? static_cast<float_t>(mc->displayWidth) / static_cast<float_t>(mc->displayHeight)
             : 1.0f;
         drawPanorama(mouseX, mouseY, partialTick, aspect);
+        // drawPanorama leaves blending on; the blur path turns it off in
+        // rotateAndBlurSkybox, so match that before the menu draws.
+        renderDisable(RenderCapability::Blend);
         return;
     }
 

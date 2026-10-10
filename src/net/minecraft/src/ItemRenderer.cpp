@@ -1,4 +1,5 @@
 #include "ItemRenderer.h"
+#include "Config.h"
 #include "Minecraft.h"
 #include "ItemStack.h"
 #include "Item.h"
@@ -21,6 +22,12 @@
 #include "InventoryPlayer.h"
 #include "platform/RenderAPI.h"
 #include "java/System.h"
+
+#if PLATFORM_ITEM_2D_LISTS
+#include <array>
+#include <map>
+#include "GLAllocation.h"
+#endif
 
 
 
@@ -217,9 +224,28 @@ void ItemRenderer::emitItemIn2DGeometry(Tessellator* tessellator, float maxU, fl
 }
 
 void ItemRenderer::renderItemIn2D(Tessellator* tessellator, float maxU, float minV, float minU, float maxV) {
+#if PLATFORM_ITEM_2D_LISTS
+    // The geometry depends only on the icon rectangle, so it is recorded once
+    // (the backend turns the Tessellator draw into a VBO) and replayed.
+    // Never freed; bounded by the distinct icons drawn (a few hundred lists).
+    static std::map<std::array<float, 4>, int> lists;
+    const std::array<float, 4> key = {maxU, minV, minU, maxV};
+    auto it = lists.find(key);
+    if (it == lists.end()) {
+        const int list = GLAllocation::generateDisplayLists(1);
+        renderBeginDisplayList(list);
+        tessellator->startDrawingQuads();
+        emitItemIn2DGeometry(tessellator, maxU, minV, minU, maxV);
+        tessellator->draw();
+        renderEndDisplayList();
+        it = lists.emplace(key, list).first;
+    }
+    renderCallDisplayList(it->second);
+#else
     tessellator->startDrawingQuads();
     emitItemIn2DGeometry(tessellator, maxU, minV, minU, maxV);
     tessellator->draw();
+#endif
 }
 
 #ifdef PS2_PLATFORM
@@ -291,6 +317,8 @@ void ItemRenderer::renderItemInFirstPerson(float partialTick) {
     const int blockZ = MathHelper::floor_double(player->posZ);
     float brightness = 1.0f;
     int packedLight = mc->theWorld->getLightBrightnessForSkyBlocks(blockX, blockY, blockZ, 0);
+    // The held torch lights the hand that holds it.
+    packedLight = Config::applyHeldLight(packedLight, player->posX, player->posY, player->posZ);
     OpenGlHelper::setLightmapTextureCoords(OpenGlHelper::lightmapTexUnit,
                                             static_cast<float>(packedLight & 0xffff),
                                             static_cast<float>((packedLight >> 16) & 0xffff));

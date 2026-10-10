@@ -8,6 +8,7 @@
 #include "platform/PlatformTuning.h"
 #include "platform/PlatformCompat.h"
 #include "platform/world/StreamingFrameBudget.h"
+#include "platform/world/LightingFrameBudget.h"
 #include "platform/ClientPlatformPolicy.h"
 #include "platform/Input.h"
 #if PLATFORM_PS2
@@ -225,6 +226,11 @@ namespace
 #include "net/minecraft/src/WorldProvider.h"
 #include "net/minecraft/src/WorldRenderer.h"
 #include "net/minecraft/src/WorldClient.h"
+
+#ifdef VITA_PLATFORM
+// Set by runTick when an animated-texture update is due, consumed by run().
+static bool s_vitaDynamicTexturesPending = false;
+#endif
 
 // ─── Static members ───────────────────────────────────────────────────────────
 
@@ -930,6 +936,30 @@ void Minecraft::run()
             try
             {
                 const long_t clientFrameStartNs = System::nanoTime();
+#ifdef VITA_PLATFORM
+                // Frame cap = the display's vsync interval (Max 0 = off, Balanced
+                // 1 = 60 Hz, Power saver 2 = 30 Hz), re-applied whenever the option
+                // changes. The game timer keeps real time, so a capped frame just
+                // runs fewer/more ticks; nothing here sleeps.
+                {
+                    static int_t appliedCap = -1;
+                    static long_t lastFrameStartNs = 0;
+                    int_t cap = gameSettings != nullptr ? gameSettings->limitFramerate : 2;
+                    cap = cap < 0 ? 0 : (cap > 2 ? 2 : cap);
+                    if (cap != appliedCap)
+                    {
+                        lwjgl::Display::setSwapInterval(cap);
+                        appliedCap = cap;
+                    }
+                    // Pacing signal for the adaptive lighting budget. Max has no
+                    // period of its own; judge it against 30 fps.
+                    if (lastFrameStartNs != 0)
+                        LightingFrameBudget::noteFrame(
+                            (uint64_t)(clientFrameStartNs - lastFrameStartNs) / 1000ULL,
+                            cap == 1 ? 16667ULL : 33333ULL);
+                    lastFrameStartNs = clientFrameStartNs;
+                }
+#endif
                 long_t clientRenderNs = 0;
                 ClientProfiler::frameBegin();
                 PlatformStreamingFrameBudget::beginFrame();
@@ -975,6 +1005,14 @@ void Minecraft::run()
                 }
                 long_t l2 = System::nanoTime() - l1;
                 ClientProfiler::ticks(l2, clientTicksThisFrame);
+#ifdef VITA_PLATFORM
+                if (clientTicksThisFrame == 0 && s_vitaDynamicTexturesPending)
+                {
+                    s_vitaDynamicTexturesPending = false;
+                    PlatformTickPhaseScope dynTexPhase("dynTexIdle");
+                    renderEngine->updateDynamicTextures();
+                }
+#endif
                 checkGLError("Pre render");
                 // The Grass option (EntityRenderer sets the same): writing
                 // fancyGraphics here flipped the flag the mesh worker reads
@@ -1001,9 +1039,11 @@ void Minecraft::run()
                 ClientProfiler::lighting(System::nanoTime() - clientLightingStartNs);
 
                 const long_t swapStartNs = System::nanoTime();
+#ifndef VITA_PLATFORM
                 if (!lwjgl::Keyboard::isKeyDown(0x41))
                     lwjgl::Display::update();
                 ClientProfiler::displayUpdate(System::nanoTime() - swapStartNs);
+#endif
                 const long_t swapEndNs = System::nanoTime();
                 cpuGpuSwapNs += swapEndNs - swapStartNs;
                 cpuGpuFrameNs += swapEndNs - l1;
@@ -1093,10 +1133,34 @@ void Minecraft::run()
                 // backend overlap its present work with them instead of doing it
                 // inside the swap. Everything between here and that swap changes
                 // tracked state only; nothing submits geometry.
+#ifdef VITA_PLATFORM
+                // vitaGL ends the GXM scene only in the swap, so swapping here
+                // lets the GPU draw this frame while the CPU runs the next
+                // frame's ticks and lighting instead of after them.
+                {
+                    const long_t vitaSwapStartNs = System::nanoTime();
+                    lwjgl::Display::update();
+                    const long_t vitaSwapNs = System::nanoTime() - vitaSwapStartNs;
+                    s_vitaLastSwapUs = vitaSwapNs / 1000;
+                    ClientProfiler::displayUpdate(vitaSwapNs);
+                    cpuGpuSwapNs += vitaSwapNs;
+                }
+#if PLATFORM_LIGHTING_SECTION_QUEUE
+                // Light worker joined before the next ticks change blocks or
+                // free chunks.
+                if (theWorld != nullptr)
+                {
+                    const long_t joinStartNs = System::nanoTime();
+                    theWorld->endAsyncLighting();
+                    ClientProfiler::tickPhase("lightJoin", System::nanoTime() - joinStartNs);
+                }
+#endif
+#else
                 renderSubmitFrame();
 
                 if (lwjgl::Keyboard::isKeyDown(0x41))
                     lwjgl::Display::update();
+#endif
 
                 screenshotListener();
 
@@ -1360,7 +1424,10 @@ void Minecraft::displayGuiScreen(GuiScreen *guiscreen)
         ScaledResolution scaledresolution(gameSettings, displayWidth, displayHeight);
         int_t i = scaledresolution.getScaledWidth();
         int_t j = scaledresolution.getScaledHeight();
-        guiscreen->setWorldAndResolution(this, i, j);
+        {
+            PlatformTickPhaseScope openPhase("guiOpen");
+            guiscreen->setWorldAndResolution(this, i, j);
+        }
         skipRenderWorld = false;
     }
     else
@@ -1892,8 +1959,19 @@ void Minecraft::runTick()
         const int_t everyN = PLATFORM_DYNAMIC_TEXTURE_INTERVAL_TICKS;
         const bool runDynamicTextures = (everyN <= 1) || ((s_dynamicTexturePhase % everyN) == 0);
         ++s_dynamicTexturePhase;
+#ifdef VITA_PLATFORM
+        // Deferred to the next frame that runs no tick (see run()), so the
+        // atlas uploads stop landing on the frame that already carries a tick.
+        if (runDynamicTextures)
+        {
+            if (s_vitaDynamicTexturesPending)
+                renderEngine->updateDynamicTextures();
+            s_vitaDynamicTexturesPending = true;
+        }
+#else
         if (runDynamicTextures)
             renderEngine->updateDynamicTextures();
+#endif
         ClientProfiler::tickPhase("dynTex", System::nanoTime() - clientPhaseStartNs);
     }
 
@@ -2618,6 +2696,20 @@ void Minecraft::changeWorld(World *world, const std::string &s, EntityPlayerSP *
     if (world != nullptr)
     {
         playerController->onWorldChanged(world);
+#if PLATFORM_PRECACHE_GUI_TEXTURES
+        // Decode and upload the container screens now, behind the loading
+        // screen, instead of on the frame the player first opens each one.
+        // getTexture() caches, so a dimension change costs nothing.
+        if (renderEngine != nullptr)
+        {
+            static const char *const guiTextures[] = {
+                "/gui/inventory.png", "/gui/container.png", "/gui/crafting.png", "/gui/furnace.png",
+                "/gui/trap.png", "/gui/enchant.png", "/gui/alchemy.png", "/item/book.png",
+            };
+            for (const char *path : guiTextures)
+                (void)renderEngine->getTexture(path);
+        }
+#endif
         if (!isMultiplayerWorld())
         {
             if (entityplayer == nullptr)

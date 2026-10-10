@@ -165,6 +165,18 @@ void swapBuffers()
 	SDL_GL_SwapWindow(GLContext::detail::getWindow());
 }
 
+void setSwapInterval(int_t interval)
+{
+#if !defined(MC_WIN32)
+	// Northfear SDL's vitaGL backend forwards any value to vitaGL's
+	// vsync_interval (SDL_vitagles_vgl.c), which the GXM display-queue callback
+	// reads every frame, so this takes effect on the next present.
+	SDL_GL_SetSwapInterval(interval);
+#else
+	(void)interval;
+#endif
+}
+
 void update(bool doProcessMessages)
 {
 	swapBuffers();

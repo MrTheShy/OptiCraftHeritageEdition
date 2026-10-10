@@ -14,6 +14,15 @@
 
 #include <algorithm>
 
+
+// Lay the hint row out once and replay the captured glyphs while its key holds.
+// Vita: same client-array draw as the plain path (FontRenderer::drawCapturedText).
+#if (PLATFORM_PS2 && PS2_CACHE_LEGACY_HINT_TEXT) || defined(VITA_PLATFORM)
+#define LEGACY_HINT_TEXT_CACHE 1
+#else
+#define LEGACY_HINT_TEXT_CACHE 0
+#endif
+
 namespace
 {
 constexpr int_t PROMPT_COUNT = 5;
@@ -196,7 +205,7 @@ void emitRow(FontRenderer *font, const PromptRow &row)
 
 bool captureRow(FontRenderer *font, PromptRow &row)
 {
-#if PLATFORM_PS2 && PS2_CACHE_LEGACY_HINT_TEXT
+#if LEGACY_HINT_TEXT_CACHE
     if (font == nullptr || visiblePromptCount(row.texts, PROMPT_COUNT) <= 0)
         return false;
 
@@ -228,7 +237,7 @@ void drawRow(FontRenderer *font, PromptRow &row)
     renderDisable(RenderCapability::DepthTest);
     renderEnable(RenderCapability::Texture2D);
 
-#if PLATFORM_PS2 && PS2_CACHE_LEGACY_HINT_TEXT
+#if LEGACY_HINT_TEXT_CACHE
     if (!row.capturedValid)
         (void)captureRow(font, row);
     if (row.capturedValid && font->drawCapturedText(row.captured))
@@ -257,7 +266,7 @@ void LegacyControlTooltipHud::render(Minecraft *mc, int_t screenWidth, int_t scr
     if (!refreshRowKey(mc, settings, font, s_row, screenWidth, screenHeight))
     {
         rebuildRow(settings, font, s_row, screenWidth, screenHeight);
-#if PLATFORM_PS2 && PS2_CACHE_LEGACY_HINT_TEXT
+#if LEGACY_HINT_TEXT_CACHE
         (void)captureRow(font, s_row);
 #endif
     }

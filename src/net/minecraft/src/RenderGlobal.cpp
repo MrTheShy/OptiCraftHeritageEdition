@@ -109,6 +109,10 @@
 #endif
 #include "platform/PlatformCompat.h"
 #include "platform/Profiler.h"
+#if PLATFORM_MODEL_GPU_BATCH
+#include "pc/render/VitaTerrainBatch.h"
+#endif
+#include <typeinfo>
 
 namespace
 {
@@ -289,18 +293,29 @@ RenderGlobal::RenderGlobal(Minecraft *minecraft, RenderEngine *renderengine)
 	int_t i = 256 / byte1 + 2;
 	float f = 16.0f;
 
+#ifdef VITA_PLATFORM
+	// One draw for the 169 sky quads instead of one each.
+	tessellator->startDrawingQuads();
+#endif
 	for (int_t j = -byte1 * i; j <= byte1 * i; j += byte1)
 	{
 		for (int_t l = -byte1 * i; l <= byte1 * i; l += byte1)
 		{
+#ifndef VITA_PLATFORM
 			tessellator->startDrawingQuads();
+#endif
 			tessellator->addVertex(j + 0, f, l + 0);
 			tessellator->addVertex(j + byte1, f, l + 0);
 			tessellator->addVertex(j + byte1, f, l + byte1);
 			tessellator->addVertex(j + 0, f, l + byte1);
+#ifndef VITA_PLATFORM
 			tessellator->draw();
+#endif
 		}
 	}
+#ifdef VITA_PLATFORM
+	tessellator->draw();
+#endif
 
 	renderEndDisplayList();
 
@@ -2109,6 +2124,7 @@ namespace
 
 	std::vector<unsigned char> cloudMask;
 	int cloudMaskSize = 0;
+	int cloudMaskWrap = -1; // size - 1 when the size is a power of two (clouds.png: 256)
 	float cloudPieceSize = 1.0f;
 	float cloudSplitRange = 0.0f;
 
@@ -2126,12 +2142,17 @@ namespace
 		for (std::size_t i = 0; i < pixels.size(); i++)
 			cloudMask[i] = ((static_cast<unsigned int>(pixels[i]) >> 24) & 0xFF) > 25 ? 1 : 0;
 		cloudMaskSize = size;
+		cloudMaskWrap = (size & (size - 1)) == 0 ? size - 1 : -1;
 		return true;
 	}
 
 	bool isCloud(int x, int z)
 	{
 		const int n = cloudMaskSize;
+		// ~20k calls per Fancy rebuild; the A9 has no divider, so a power-of-two
+		// size wraps with a mask (same value as the signed modulo below).
+		if (cloudMaskWrap >= 0)
+			return cloudMask[(z & cloudMaskWrap) * n + (x & cloudMaskWrap)] != 0;
 		x %= n;
 		z %= n;
 		if (x < 0)
@@ -2139,6 +2160,43 @@ namespace
 		if (z < 0)
 			z += n;
 		return cloudMask[z * n + x] != 0;
+	}
+
+	// Sink for cloudFlat / cloudBoxes in place of the Tessellator: positions
+	// only, one group per setColorRGBA_F call (the colours are applied at draw
+	// time as the current colour, so they are not part of the cached geometry).
+	struct CloudSink
+	{
+		std::vector<float> xyz;
+		int groupStart[5] = {0, 0, 0, 0, 0};
+		int groups = 0;
+		void setColorRGBA_F(float, float, float, float)
+		{
+			if (groups < 4)
+				groupStart[groups++] = static_cast<int>(xyz.size() / 3);
+		}
+		void setNormal(float, float, float) {}
+		void addVertex(double x, double y, double z)
+		{
+			xyz.push_back(static_cast<float>(x));
+			xyz.push_back(static_cast<float>(y));
+			xyz.push_back(static_cast<float>(z));
+		}
+		int groupCount(int group) const
+		{
+			const int end = group + 1 < groups ? groupStart[group + 1] : static_cast<int>(xyz.size() / 3);
+			return end - groupStart[group];
+		}
+	};
+
+	// The bytes Tessellator::setColorRGBA_F would store, as the current colour.
+	void cloudColor(float r, float g, float b, float a, float out[4])
+	{
+		auto channel = [](float v) { return static_cast<float>(std::min(std::max(static_cast<int>(v * 255.0f), 0), 255)) / 255.0f; };
+		out[0] = channel(r);
+		out[1] = channel(g);
+		out[2] = channel(b);
+		out[3] = channel(a);
 	}
 
 	CloudVertex cloudLerp(const CloudVertex &a, const CloudVertex &b, float t)
@@ -2155,7 +2213,8 @@ namespace
 		return std::max(std::fabs(b.x - a.x), std::max(std::fabs(b.y - a.y), std::fabs(b.z - a.z)));
 	}
 
-	void cloudQuad(Tessellator *tessellator, const CloudVertex &a, const CloudVertex &b, const CloudVertex &c, const CloudVertex &d)
+	template <typename Sink>
+	void cloudQuad(Sink *tessellator, const CloudVertex &a, const CloudVertex &b, const CloudVertex &c, const CloudVertex &d)
 	{
 		const float minX = std::min(std::min(a.x, b.x), std::min(c.x, d.x));
 		const float maxX = std::max(std::max(a.x, b.x), std::max(c.x, d.x));
@@ -2192,7 +2251,8 @@ namespace
 		}
 	}
 
-	void cloudFlat(Tessellator *tessellator, double originX, double originZ, float y, double cell, int range)
+	template <typename Sink>
+	void cloudFlat(Sink *tessellator, double originX, double originZ, float y, double cell, int range)
 	{
 		const int x0 = static_cast<int>(std::floor((originX - range) / cell));
 		const int x1 = static_cast<int>(std::floor((originX + range) / cell));
@@ -2226,16 +2286,15 @@ namespace
 		float sideZ[3];
 	};
 
-	void cloudBoxes(Tessellator *tessellator, double originX, double originZ, float y, float height, float inset,
-		double cell, int range, const CloudColors &colors)
+	template <typename Sink>
+	void cloudBoxes(Sink *tessellator, double originX, double originZ, float y, float height, float inset,
+		double cell, int range, const CloudColors &colors, bool drawBottom, bool drawTop)
 	{
 		const int x0 = static_cast<int>(std::floor((originX - range) / cell));
 		const int x1 = static_cast<int>(std::floor((originX + range) / cell));
 		const int z0 = static_cast<int>(std::floor((originZ - range) / cell));
 		const int z1 = static_cast<int>(std::floor((originZ + range) / cell));
 		const float top = y + height;
-		const bool drawBottom = y > -height - 1.0f;
-		const bool drawTop = y <= height + 1.0f;
 
 		for (int pass = 0; pass < 2; pass++)
 		{
@@ -2309,6 +2368,57 @@ namespace
 			}
 		}
 	}
+
+	// Rebuilding the cloud geometry cost 1.5-1.9 ms a frame (twice: depth
+	// pre-pass and colour). It only changes when the grid cell under the camera,
+	// the faces in view (above/below the layer) or the 8-bit colours change, so
+	// it is recorded once around a snapped origin and replayed with the drift
+	// as a translation.
+	struct CloudCache
+	{
+		unsigned buffer = 0;
+		int groupStart[5] = {0, 0, 0, 0, 0};
+		int groupCount[4] = {0, 0, 0, 0};
+		int groups = 0;
+		bool valid = false;
+		bool fancy = false;
+		int cellX = 0, cellZ = 0;
+		bool drawBottom = false, drawTop = false;
+		std::uint32_t colors[4] = {};
+	};
+	CloudCache cloudCache;
+
+
+	// Returns true when the list must be re-recorded for this key.
+	bool cloudCacheStale(bool fancy, int cellX, int cellZ, bool drawBottom, bool drawTop, const std::uint32_t *colors)
+	{
+		CloudCache &c = cloudCache;
+		const bool same = c.valid && c.fancy == fancy && c.cellX == cellX && c.cellZ == cellZ &&
+			c.drawBottom == drawBottom && c.drawTop == drawTop && std::memcmp(c.colors, colors, sizeof(c.colors)) == 0;
+		if (same)
+			return false;
+		c.valid = true;
+		c.fancy = fancy;
+		c.cellX = cellX;
+		c.cellZ = cellZ;
+		c.drawBottom = drawBottom;
+		c.drawTop = drawTop;
+		std::memcpy(c.colors, colors, sizeof(c.colors));
+		return true;
+	}
+
+	void cloudCacheStore(CloudSink &sink)
+	{
+		CloudCache &c = cloudCache;
+		vitaStaticQuadsRelease(c.buffer);
+		c.buffer = vitaStaticQuadsUpload(sink.xyz.data(), sink.xyz.size() / 3);
+		c.groups = sink.groups;
+		for (int g = 0; g < 4; ++g)
+		{
+			c.groupStart[g] = g < sink.groups ? sink.groupStart[g] : 0;
+			c.groupCount[g] = g < sink.groups ? sink.groupCount(g) : 0;
+		}
+	}
 }
 #endif
 
@@ -2378,11 +2488,26 @@ void RenderGlobal::renderClouds(float f)
 	{
 		cloudPieceSize = 8.0f;
 		cloudSplitRange = 64.0f;
+		const double cell = 2048.0 / cloudMaskSize;
+		const int cellX = static_cast<int>(std::floor(d / cell));
+		const int cellZ = static_cast<int>(std::floor(d1 / cell));
+		const std::uint32_t colors[4] = {0, 0, 0, 0};
+		if (cloudCacheStale(false, cellX, cellZ, true, true, colors))
+		{
+			CloudSink sink;
+			sink.setColorRGBA_F(f2, f3, f4, 0.8f);
+			cloudFlat(&sink, cellX * cell, cellZ * cell, 0.0f, cell, byte0 * i);
+			cloudCacheStore(sink);
+		}
 		renderDisable(RenderCapability::Texture2D);
-		tessellator->startDrawingQuads();
-		tessellator->setColorRGBA_F(f2, f3, f4, 0.8f);
-		cloudFlat(tessellator, d, d1, f9, 2048.0 / cloudMaskSize, byte0 * i);
-		tessellator->draw();
+		renderPushMatrix();
+		renderTranslate(static_cast<float>(cellX * cell - d), f9, static_cast<float>(cellZ * cell - d1));
+		{
+			float rgba[4];
+			cloudColor(f2, f3, f4, 0.8f, rgba);
+			vitaStaticQuadsDraw(cloudCache.buffer, cloudCache.groupStart[0], cloudCache.groupCount[0], rgba);
+		}
+		renderPopMatrix();
 		renderEnable(RenderCapability::Texture2D);
 
 		renderColor4f(1.0f, 1.0f, 1.0f, 1.0f);
@@ -2512,17 +2637,49 @@ void RenderGlobal::renderCloudsFancy(float f)
 		};
 		cloudPieceSize = 1.0f;
 		cloudSplitRange = 6.0f;
+		const double cell = 256.0 / cloudMaskSize;
+		const int cellX = static_cast<int>(std::floor(d / cell));
+		const int cellZ = static_cast<int>(std::floor(d1 / cell));
+		const bool drawBottom = f4 > -f3 - 1.0f;
+		const bool drawTop = f4 <= f3 + 1.0f;
+		// The colours are not part of the key: they change at every 8-bit step
+		// of the sky colour (a rebuild of 1.5-4.6 ms each, many at dusk) and
+		// are applied at draw time instead.
+		const std::uint32_t colorKeys[4] = {0, 0, 0, 0};
+		if (cloudCacheStale(true, cellX, cellZ, drawBottom, drawTop, colorKeys))
+		{
+			CloudSink sink;
+			cloudBoxes(&sink, cellX * cell, cellZ * cell, 0.0f, f3, f16, cell, byte0 * k, colors,
+				drawBottom, drawTop);
+			cloudCacheStore(sink);
+		}
 		renderDisable(RenderCapability::Texture2D);
+		renderPushMatrix();
+		renderTranslate(static_cast<float>(cellX * cell - d), f4, static_cast<float>(cellZ * cell - d1));
+		// Group order as cloudBoxes emits them: bottom (if drawn), top (if
+		// drawn), the X sides, the Z sides.
+		const float *groupRgb[4];
+		int groupsUsed = 0;
+		if (drawBottom)
+			groupRgb[groupsUsed++] = colors.bottom;
+		if (drawTop)
+			groupRgb[groupsUsed++] = colors.top;
+		groupRgb[groupsUsed++] = colors.sideX;
+		groupRgb[groupsUsed++] = colors.sideZ;
 		for (int_t l = 0; l < 2; l++)
 		{
 			if (l == 0)
 				renderColorMask(false, false, false, false);
 			else
 				renderColorMask(true, true, true, true);
-			tessellator->startDrawingQuads();
-			cloudBoxes(tessellator, d, d1, f4, f3, f16, 256.0 / cloudMaskSize, byte0 * k, colors);
-			tessellator->draw();
+			for (int g = 0; g < groupsUsed && g < cloudCache.groups; ++g)
+			{
+				float rgba[4];
+				cloudColor(groupRgb[g][0], groupRgb[g][1], groupRgb[g][2], 0.8f, rgba);
+				vitaStaticQuadsDraw(cloudCache.buffer, cloudCache.groupStart[g], cloudCache.groupCount[g], rgba);
+			}
 		}
+		renderPopMatrix();
 		renderEnable(RenderCapability::Texture2D);
 
 		renderColor4f(1.0f, 1.0f, 1.0f, 1.0f);

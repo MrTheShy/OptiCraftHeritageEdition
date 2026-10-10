@@ -1456,6 +1456,7 @@ void EntityRenderer::updateCameraAndRender(float partialTicks)
         
         setupOverlayRendering();
         
+#ifndef VITA_PLATFORM // Vita paces through the display vsync (Minecraft::run), not sleeps
         if (mc->gameSettings->limitFramerate == 2)
         {
             int64_t sleepTime = (field_28133_I + (int64_t)(1000000000LL / limitFps) - 
@@ -1472,6 +1473,7 @@ void EntityRenderer::updateCameraAndRender(float partialTicks)
                 PlatformCompat::delay((uint32_t)sleepTime);
             }
         }
+#endif
         
         field_28133_I = std::chrono::duration_cast<std::chrono::nanoseconds>(
             std::chrono::steady_clock::now().time_since_epoch()).count();
@@ -1496,7 +1498,10 @@ void EntityRenderer::updateCameraAndRender(float partialTicks)
 #if PLATFORM_PS2
         ps2SetMenuPad(mc->isScreenOwnedByPlayer2() ? 1 : 0);
 #endif
-        mc->currentScreen->drawScreen(scaledMouseX, scaledMouseY, partialTicks);
+        {
+            PlatformTickPhaseScope drawPhase("guiDraw");
+            mc->currentScreen->drawScreen(scaledMouseX, scaledMouseY, partialTicks);
+        }
 
 #if PLATFORM_HAS_VIRTUAL_KEYBOARD
         // On-screen keyboard overlay (drawn on top of the focused text screen).

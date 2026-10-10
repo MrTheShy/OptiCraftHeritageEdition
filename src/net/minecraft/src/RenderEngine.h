@@ -134,6 +134,11 @@ private:
 	GameSettings *options;
 	bool dynamicTexturesUpdated;
 	int_t dynamicTextureTickCounter;
+	// While updateDynamicTextures runs, the atlas whose sampler parameters are
+	// already set: one parameter pass per atlas instead of one per FX tile.
+	bool dynamicTextureBatch = false;
+	int_t dynamicTextureParamsSet = -1;
+	std::vector<byte_t> textureFxScratch;
 	int_t defaultTerrainFxTileWidth;
 	int_t customAnimationTerrainTileWidth;
 	int_t customAnimationItemTileWidth;

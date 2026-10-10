@@ -82,6 +82,9 @@ void processMessages();
 
 void swapBuffers();
 
+// Vblanks to wait per presented frame (0 = no vsync, 1 = 60 Hz, 2 = 30 Hz on Vita).
+void setSwapInterval(int_t interval);
+
 void update(bool doProcessMessages = true);
 
 void create();

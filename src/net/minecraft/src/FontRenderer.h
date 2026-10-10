@@ -77,4 +77,7 @@ private:
 	bool bidiFlag;
 	std::vector<int_t> buffer;
 	std::vector<DecorationRect> pendingDecorations;
+	// UTF-16 scratch for drawing / measuring, reused across calls.
+	std::vector<char_t> drawUnits;
+	std::vector<char_t> widthUnits;
 };
