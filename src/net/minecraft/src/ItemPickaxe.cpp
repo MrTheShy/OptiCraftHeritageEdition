@@ -2,8 +2,8 @@
 #include "Block.h"
 #include "Material.h"
 
-Block* ItemPickaxe::blocksEffectiveAgainst[23] = {};
-int ItemPickaxe::numBlocksEffectiveAgainst = 23;
+Block* ItemPickaxe::blocksEffectiveAgainst[22] = {};
+int ItemPickaxe::numBlocksEffectiveAgainst = 22;
 
 Block** ItemPickaxe::getBlocksEffectiveAgainst() {
     Block* blocks[] = {
