@@ -12,6 +12,8 @@ bool keyDown(int sdlKey);
 bool mouseButtonDown(int sdlButton);
 void setGrabbed(bool grabbed);
 bool grabbed();
+void leftStick(float &x, float &y);
+bool sneaking();
 
 }
 }

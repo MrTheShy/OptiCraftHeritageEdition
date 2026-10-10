@@ -15,6 +15,10 @@
 #include "ps2/input/Ps2PadState.h"
 #endif
 
+#ifdef VITA_PLATFORM
+#include "lwjgl/VitaPad.h"
+#endif
+
 namespace
 {
 float clampMovement(float value)
@@ -87,7 +91,12 @@ void MovementInputFromOptions::updatePlayerMoveState(EntityPlayer *entityplayer)
 #endif
     }
 
-#if PLATFORM_DIRECT_ANALOG_MOVEMENT
+#ifdef VITA_PLATFORM
+    if (padPort == 0 && lwjgl::VitaPad::sneaking())
+        sneak = true;
+#endif
+
+#if PLATFORM_DIRECT_ANALOG_MOVEMENT || defined(VITA_PLATFORM)
     const PlatformGamepadSnapshot pad = platformGamepadSnapshot(padPort);
     bool gameplayInput = true;
     if (minecraft != nullptr && minecraft->isPlayerScreenActive(padPort))

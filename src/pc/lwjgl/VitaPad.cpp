@@ -2,6 +2,8 @@
 
 #ifdef VITA_PLATFORM
 
+#include <cmath>
+
 #include <psp2/ctrl.h>
 #include <psp2/kernel/processmgr.h>
 
@@ -51,14 +53,10 @@ enum Input
 	InputDown,
 	InputLeft,
 	InputRight,
-	InputStickUp,
-	InputStickDown,
-	InputStickLeft,
-	InputStickRight,
 	InputCount
 };
 
-constexpr int kStickThreshold = 64;
+constexpr float kMoveDeadZone = 0.2f;
 constexpr int kLookDeadZone = 24;
 constexpr float kLookSpeedPerSecond = 1000.0f;
 constexpr float kMaxFrameSeconds = 0.1f;
@@ -75,6 +73,9 @@ bool g_pointerMode = false;
 bool g_cursorKnown = false;
 float g_cursorX = 0.0f;
 float g_cursorY = 0.0f;
+bool g_sneaking = false;
+int g_stickX = 128;
+int g_stickY = 128;
 
 Action key(int code)
 {
@@ -121,13 +122,8 @@ Action actionFor(int input, bool inGame, bool pointerMode)
 			case InputStart: return key(SDLK_ESCAPE);
 			case InputSelect: return key(SDLK_F3);
 			case InputUp: return key(SDLK_F5);
-			case InputDown: return key(SDLK_LSHIFT);
 			case InputLeft: return wheel(1);
 			case InputRight: return wheel(-1);
-			case InputStickUp: return key(SDLK_w);
-			case InputStickDown: return key(SDLK_s);
-			case InputStickLeft: return key(SDLK_a);
-			case InputStickRight: return key(SDLK_d);
 			default: return Action();
 		}
 	}
@@ -322,13 +318,22 @@ void poll()
 	pressed[InputDown] = (pad.buttons & SCE_CTRL_DOWN) != 0;
 	pressed[InputLeft] = (pad.buttons & SCE_CTRL_LEFT) != 0;
 	pressed[InputRight] = (pad.buttons & SCE_CTRL_RIGHT) != 0;
-	pressed[InputStickUp] = pad.ly < 128 - kStickThreshold;
-	pressed[InputStickDown] = pad.ly > 128 + kStickThreshold;
-	pressed[InputStickLeft] = pad.lx < 128 - kStickThreshold;
-	pressed[InputStickRight] = pad.lx > 128 + kStickThreshold;
+	g_stickX = pad.lx;
+	g_stickY = pad.ly;
 
 	for (int i = 0; i < InputCount; ++i)
 	{
+		if (i == InputDown && g_grabbed && g_active[i].type == ActionType::None)
+		{
+			if (pressed[i] && !g_previous[i])
+			{
+				g_sneaking = !g_sneaking;
+				sendKey(SDLK_LSHIFT, g_sneaking);
+			}
+			g_previous[i] = pressed[i];
+			continue;
+		}
+
 		if (pressed[i] && !g_previous[i])
 		{
 			if (!g_grabbed && i >= InputUp && i <= InputRight)
@@ -358,6 +363,8 @@ void poll()
 
 bool keyDown(int sdlKey)
 {
+	if (sdlKey == SDLK_LSHIFT && g_sneaking && g_grabbed)
+		return true;
 	for (int i = 0; i < InputCount; ++i)
 	{
 		if (g_active[i].type == ActionType::Key && g_active[i].code == sdlKey)
@@ -378,6 +385,8 @@ bool mouseButtonDown(int sdlButton)
 
 void setGrabbed(bool grabbed)
 {
+	if (grabbed && !g_grabbed && g_sneaking)
+		sendKey(SDLK_LSHIFT, true);
 	g_grabbed = grabbed;
 	g_lookRemainderX = 0.0f;
 	g_lookRemainderY = 0.0f;
@@ -386,6 +395,31 @@ void setGrabbed(bool grabbed)
 bool grabbed()
 {
 	return g_grabbed;
+}
+
+bool sneaking()
+{
+	return g_sneaking;
+}
+
+void leftStick(float &x, float &y)
+{
+	x = 0.0f;
+	y = 0.0f;
+	if (!g_grabbed)
+		return;
+
+	const float sx = static_cast<float>(g_stickX - 128) / 127.0f;
+	const float sy = static_cast<float>(g_stickY - 128) / 127.0f;
+	const float length = std::sqrt(sx * sx + sy * sy);
+	if (length <= kMoveDeadZone)
+		return;
+
+	float scale = (length - kMoveDeadZone) / (1.0f - kMoveDeadZone);
+	if (scale > 1.0f)
+		scale = 1.0f;
+	x = sx / length * scale;
+	y = sy / length * scale;
 }
 
 }
