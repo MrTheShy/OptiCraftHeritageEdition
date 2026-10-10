@@ -27,10 +27,12 @@ ThreadDownloadImage::~ThreadDownloadImage()
 
 void ThreadDownloadImage::start()
 {
-#ifdef WII_PLATFORM
+#if defined(WII_PLATFORM) || defined(PS2_PLATFORM)
 	// The Wii backend currently exposes multiplayer TCP only. readUrl() returns
 	// false immediately, so execute it inline instead of invoking std::thread,
-	// which is an ENOSYS stub in devkitPPC.
+	// which is an ENOSYS stub in devkitPPC. PS2: same readUrl stub, and
+	// std::thread goes through pthreads-embedded, never initialised here
+	// (pte_osInit): a thread per spawned player crashed in pte_osThreadCreate.
 	run();
 #else
 	worker = std::thread(&ThreadDownloadImage::run, this);
