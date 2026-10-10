@@ -14,6 +14,7 @@
 #include "net/minecraft/src/GameSettings.h"
 #include "net/minecraft/src/Minecraft.h"
 #include "net/minecraft/src/RenderEngine.h"
+#include "platform/PlatformCompat.h"
 #include "platform/RenderAPI.h"
 
 namespace
@@ -42,7 +43,8 @@ float_t LegacyOptionSlider::readValue() const
 
 void LegacyOptionSlider::writeValue(float_t value)
 {
-    settings->setOptionFloatValue(option, value);
+    // Saved on release (mouseReleased), not on every drag step.
+    settings->setOptionFloatValue(option, value, !dragging);
 }
 
 std::string LegacyOptionSlider::buildLabel() const
@@ -83,6 +85,12 @@ void LegacyOptionSlider::updateFromMouse(Minecraft *mc, int_t mouseX)
     sliderValue = static_cast<float_t>(mouseX - (xPosition + knobWidth / 2)) /
         static_cast<float_t>(sliderTravel(width, knobWidth));
     sliderValue = std::max<float_t>(0.0f, std::min<float_t>(1.0f, sliderValue));
+    if (dragging && isHeavyOption())
+    {
+        heavyPending = true;
+        applyHeavyPending(false);
+        return;
+    }
     writeValue(sliderValue);
     // Read back rather than keep the pointer position: a discrete slider snaps the
     // value to its nearest stop and the knob has to follow it.
@@ -101,7 +109,30 @@ bool LegacyOptionSlider::mousePressed(Minecraft *mc, int_t mouseX, int_t mouseY)
 
 void LegacyOptionSlider::mouseReleased(int_t, int_t)
 {
+    applyHeavyPending(true);
+    if (dragging && settings != nullptr)
+        settings->saveOptions();
     dragging = false;
+}
+
+bool LegacyOptionSlider::isHeavyOption() const
+{
+    return option == EnumOptions::RENDER_DISTANCE_FINE || option == EnumOptions::VERTICAL_DISTANCE;
+}
+
+void LegacyOptionSlider::applyHeavyPending(bool force)
+{
+    constexpr std::uint64_t kHeavyApplyUs = 300000;
+    if (!heavyPending)
+        return;
+    const std::uint64_t nowUs = PlatformCompat::getMonotonicMicros();
+    if (!force && heavyAppliedUs != 0 && nowUs - heavyAppliedUs < kHeavyApplyUs)
+        return;
+    heavyPending = false;
+    heavyAppliedUs = nowUs;
+    writeValue(sliderValue);
+    sliderValue = std::max<float_t>(0.0f, std::min<float_t>(1.0f, readValue()));
+    refreshLabel();
 }
 
 void LegacyOptionSlider::mouseDragged(Minecraft *mc, int_t mouseX, int_t)

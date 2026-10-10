@@ -52,6 +52,8 @@ public:
 	static bool isDynamicUpdates();
 	static bool isSmoothFps();
 	static bool isSmoothInput();
+	// Light Updates option: 0 = Smooth, 1 = Fast, 2 = Fastest (see GameSettings::ofLightingUpdates).
+	static int_t getLightingUpdates();
 	static bool isBackgroundChunkLoading();
 	static bool isFarView();
 
@@ -77,6 +79,7 @@ public:
 	static bool isCloudsFancy();
 	static bool isCloudsOff();
 	static bool isTreesFancy();
+	static bool isTreesSmart();
 	static bool isGrassFancy();
 	static bool isBetterGrass();
 	static bool isBetterGrassFancy();
@@ -114,6 +117,15 @@ public:
 	static bool isStarsEnabled();
 	static bool isSunMoonEnabled();
 	static bool isDepthFog();
+	static bool isFastTerrain();
+	static bool isTerrainShader();
+	static bool isShaderEnhanced();
+	// Light level of what the player holds while the terrain shader lights the
+	// world with it (torch 14, glowstone 15, lava bucket 15...), else 0.
+	static int_t getHeldLightLevel();
+	// packedBrightness with its block light raised by the held light at (x,y,z).
+	static int_t applyHeldLight(int_t packedBrightness, double x, double y, double z);
+	static bool isEntityShader();
 	static bool isProfilerEnabled();
 	static bool isBetterSnow();
 	static bool isSwampColors();

@@ -61,6 +61,7 @@ public:
 	static EnumOptions *ASPECT_RATIO;
 	static EnumOptions *SUN_MOON;
 	static EnumOptions *DEPTH_FOG;
+	static EnumOptions *FAST_TERRAIN;
 	static EnumOptions *PROFILER;
 	static EnumOptions *BETTER_SNOW;
 	static EnumOptions *SWAMP_COLORS;
@@ -85,6 +86,15 @@ public:
 	static EnumOptions *RENDER_DISTANCE_FINE;
 	static EnumOptions *RENDER_BACKEND;
 	static EnumOptions *SPLITSCREEN_LAYOUT;
+	static EnumOptions *LIGHTING_UPDATES;
+	static EnumOptions *TERRAIN_SHADER;
+	static EnumOptions *ENTITY_SHADER;
+	static EnumOptions *VERTICAL_DISTANCE;
+	static EnumOptions *SHADER_EFFECTS;
+	static EnumOptions *HELD_ITEM_NAME;
+	// Runtime performance trades (platform/PlatformPerfOptions.h): ordinals
+	// 76.. follow platformPerfOptionRows(). Only the PC_LEGACY profile shows them.
+	static EnumOptions *PERF_OPTIONS[11];
 
 	static EnumOptions *getEnumOptions(int_t i);
 

@@ -40,7 +40,10 @@ void GuiVideoSettings::initGui()
 		EnumOptions::ADVANCED_OPENGL, // h
 		EnumOptions::FOG_FANCY,
 		EnumOptions::FOG_START,
-		EnumOptions::BRIGHTNESS
+		EnumOptions::BRIGHTNESS,
+#ifdef VITA_PLATFORM
+		EnumOptions::VERTICAL_DISTANCE
+#endif
 	};
 
 	StringTranslate *tr = StringTranslate::getInstance();

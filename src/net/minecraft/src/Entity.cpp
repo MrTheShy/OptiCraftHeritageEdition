@@ -1,4 +1,5 @@
 #include "Entity.h"
+#include "Config.h"
 #include "java/Arithmetic.h"
 
 #include <cmath>
@@ -1131,7 +1132,8 @@ int_t Entity::getBrightnessForRender(float)
 
 	const double verticalSample = (boundingBox->maxY - boundingBox->minY) * 0.66;
 	const int_t y = MathHelper::floor_double(posY - static_cast<double>(yOffset) + verticalSample);
-	return worldObj->getLightBrightnessForSkyBlocks(x, y, z, 0);
+	// Mobs and items near a player holding a torch are lit by it, like the terrain.
+	return Config::applyHeldLight(worldObj->getLightBrightnessForSkyBlocks(x, y, z, 0), posX, posY, posZ);
 }
 
 float Entity::getEntityBrightness(float)

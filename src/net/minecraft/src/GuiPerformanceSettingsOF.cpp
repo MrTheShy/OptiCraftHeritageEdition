@@ -8,6 +8,11 @@
 #include "StringTranslate.h"
 #include "ScaledResolution.h"
 #include "Minecraft.h"
+#include "platform/PlatformConfig.h"
+#include "platform/PlatformPerfOptions.h"
+
+#include <algorithm>
+#include <vector>
 
 GuiPerformanceSettingsOF::GuiPerformanceSettingsOF(GuiScreen *parent, GameSettings *gamesettings)
 	: prevScreen(parent)
@@ -19,10 +24,28 @@ GuiPerformanceSettingsOF::GuiPerformanceSettingsOF(GuiScreen *parent, GameSettin
 void GuiPerformanceSettingsOF::initGui()
 {
     title = uiText("Performance Settings");
-	EnumOptions *enumOptions[] = {
+	std::vector<EnumOptions *> enumOptions = {
 		EnumOptions::SMOOTH_FPS, EnumOptions::SMOOTH_INPUT, EnumOptions::LOAD_FAR,
 		EnumOptions::PRELOADED_CHUNKS, EnumOptions::CHUNK_UPDATES, EnumOptions::CHUNK_UPDATES_DYNAMIC
 	};
+#if PLATFORM_LIGHTING_EXTRA_BUDGET_US > 0
+	enumOptions.push_back(EnumOptions::LIGHTING_UPDATES);
+#endif
+#if PLATFORM_TERRAIN_VBO_BATCH
+	enumOptions.push_back(EnumOptions::FAST_TERRAIN);
+	enumOptions.push_back(EnumOptions::TERRAIN_SHADER);
+	enumOptions.push_back(EnumOptions::SHADER_EFFECTS);
+#endif
+#if PLATFORM_MODEL_GPU_BATCH
+	enumOptions.push_back(EnumOptions::ENTITY_SHADER);
+#endif
+#if PLATFORM_PC_LEGACY
+	// Runtime performance trades (platform/PlatformPerfOptions.h). OFF is the
+	// vanilla 1.2.5 behaviour for the simulation rows; the four effect rows
+	// read ON = vanilla.
+	for (EnumOptions *opt : EnumOptions::PERF_OPTIONS)
+		enumOptions.push_back(opt);
+#endif
 
 	StringTranslate *tr = StringTranslate::getInstance();
 	int_t i = 0;
@@ -36,7 +59,9 @@ void GuiPerformanceSettingsOF::initGui()
 			controlList.push_back(new GuiSlider(opt->returnEnumOrdinal(), x, y, opt, settings->getKeyBinding(opt), settings->getOptionFloatValue(opt)));
 		++i;
 	}
-	controlList.push_back(new GuiButton(200, width / 2 - 100, height / 6 + 168 + 11, tr->translateKey("gui.done")));
+	// Below the last option row: the Vita list is longer than vanilla's six.
+	const int_t doneY = std::max<int_t>(height / 6 + 168 + 11, height / 6 + 21 * ((i + 1) / 2) - 10 + 4);
+	controlList.push_back(new GuiButton(200, width / 2 - 100, doneY, tr->translateKey("gui.done")));
 }
 
 void GuiPerformanceSettingsOF::actionPerformed(GuiButton *button)

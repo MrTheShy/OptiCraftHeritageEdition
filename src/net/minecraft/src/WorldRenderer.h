@@ -88,6 +88,14 @@ public:
 	// exposed face not built yet). 1 = publish first, 2 = after the 1s, 0 = no
 	// edit pending. See RenderGlobal::markRenderersInRange.
 	std::uint8_t pcLegacyEditOrder = 0;
+	// Trees: Smart. The build in progress meshes its leaves as Fast (far from
+	// the viewer), and whether the published mesh was built that way, so
+	// RenderGlobal can rebuild it Fancy when the viewer comes close.
+	bool pcLegacyBuildFarLeaves = false;
+	bool pcLegacyBuiltFarLeaves = false;
+	// Viewer position for that choice, set by RenderGlobal each frame.
+	static double pcLegacyViewerX, pcLegacyViewerY, pcLegacyViewerZ;
+	float pcLegacyViewerDistanceSq() const;
 	// Drops a build in progress (the renderer stays dirty) so a player edit
 	// can take the single staging slot at once.
 	void pcLegacyAbandonBuild() { pcLegacyResetBuildState(); }

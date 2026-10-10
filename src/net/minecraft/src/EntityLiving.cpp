@@ -34,6 +34,7 @@
 #include "Material.h"
 #include "MovingObjectPosition.h"
 #include "platform/PlatformTuning.h"
+#include "platform/PlatformPerfOptions.h"
 #if PLATFORM_PS2
 #include "ps2/diagnostics/Ps2OptimizationValidation.h"
 #endif
@@ -1656,7 +1657,7 @@ void EntityLiving::onLivingUpdate()
 	}
 	landMovementFactor = previousLandMovementFactor;
 #if PLATFORM_LIMIT_ENTITY_PUSH_COLLISIONS
-	if (!isEntityPushCollisionRelevant(this))
+	if (platformPerf().pushLimit && !isEntityPushCollisionRelevant(this))
 	{
 		return;
 	}
@@ -1866,6 +1867,8 @@ float EntityLiving::getCachedNearestPlayerDistanceSq()
 #if PLATFORM_THROTTLE_ENTITY_AI
 bool EntityLiving::shouldRunEntityDecisionAI()
 {
+	if (!platformPerf().aiThrottle)
+		return true;
 	int_t aiTickDivisor = 1;
 	EntityPlayer *nearestPlayer = getCachedNearestPlayer();
 	if (nearestPlayer != nullptr)

@@ -7,6 +7,7 @@
 #include "EntityLiving.h"
 #include "EntityAnimal.h"
 #include "platform/PlatformTuning.h"
+#include "platform/PlatformPerfOptions.h"
 #include "platform/RenderAPI.h"
 
 
@@ -269,20 +270,17 @@ void Render::renderAABB(AxisAlignedBB* aabb) {
 }
 
 void Render::doRenderShadowAndFire(Entity* entity, double x, double y, double z, float yaw, float partialTicks) {
-#if PLATFORM_SKIP_ENTITY_SHADOWS
     // See PS2_SKIP_ENTITY_SHADOWS: a 1-bit-alpha framebuffer turns the soft
     // shadow gradient into hard black squares, and the block scan behind it is
     // not affordable per entity per frame.
     (void)yaw;
-#else
-    if (renderManager->options->fancyGraphics && shadowSize > 0.0f) {
+    if (!platformPerf().skipEntityShadows && renderManager->options->fancyGraphics && shadowSize > 0.0f) {
         double d = renderManager->getDistanceToCamera(entity->posX, entity->posY, entity->posZ);
         float f = (float)((1.0 - d / 256.0) * (double)shadowOpaque);
         if (f > 0.0f) {
             renderShadow(entity, x, y, z, f, partialTicks);
         }
     }
-#endif
     if (entity->isBurning()) {
         renderEntityOnFire(entity, x, y, z, partialTicks);
     }

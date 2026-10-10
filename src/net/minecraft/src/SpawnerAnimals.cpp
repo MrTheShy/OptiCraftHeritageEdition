@@ -2,6 +2,7 @@
 #include "java/Arithmetic.h"
 
 #include "platform/PlatformTuning.h"
+#include "platform/PlatformPerfOptions.h"
 
 #include <functional>
 #include <map>
@@ -139,16 +140,19 @@ int_t SpawnerAnimals::performSpawning(World *world, bool spawnHostiles, bool spa
         return 0;
 
 #if PLATFORM_MOB_SPAWN_INTERVAL_TICKS > 1 || PLATFORM_MAX_LIVE_MOBS < 0x7fffffff
+    const bool mobLimits = platformPerf().mobLimits;
+    static int_t s_spawnPhase = 0;
+    if (mobLimits && ++s_spawnPhase < PLATFORM_MOB_SPAWN_INTERVAL_TICKS)
+        return 0;
+    s_spawnPhase = 0;
+
+    // Counted after the interval check: three scans of the entity list on the
+    // ticks that return right away were pure overhead.
     int_t liveMobs = world->countEntities(EnumCreatureTypeTag::monster_tag)
                    + world->countEntities(EnumCreatureTypeTag::creature_tag)
                    + world->countEntities(EnumCreatureTypeTag::waterCreature_tag);
 
-    static int_t s_spawnPhase = 0;
-    if (++s_spawnPhase < PLATFORM_MOB_SPAWN_INTERVAL_TICKS)
-        return 0;
-    s_spawnPhase = 0;
-
-    if (liveMobs >= PLATFORM_MAX_LIVE_MOBS)
+    if (mobLimits && liveMobs >= PLATFORM_MAX_LIVE_MOBS)
         return 0;
 #endif
 
@@ -356,7 +360,7 @@ int_t SpawnerAnimals::performSpawning(World *world, bool spawnHostiles, bool spa
 
                         totalSpawned += spawnedInGroup;
 #if PLATFORM_MOB_SPAWN_INTERVAL_TICKS > 1 || PLATFORM_MAX_LIVE_MOBS < 0x7fffffff
-                        if (liveMobs >= PLATFORM_MAX_LIVE_MOBS)
+                        if (mobLimits && liveMobs >= PLATFORM_MAX_LIVE_MOBS)
                             return totalSpawned;
 #endif
                     }

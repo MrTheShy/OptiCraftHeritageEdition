@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cstdint>
+
 #include "GuiButton.h"
 
 class EnumOptions;
@@ -26,4 +28,6 @@ public:
 
 private:
 	EnumOptions *idFloat;
+	Minecraft *heldMc = nullptr;
+	std::uint64_t heavyAppliedUs = 0;
 };

@@ -3,6 +3,7 @@
 #include "platform/WorldLoadTrace.h"
 #include "platform/Diagnostics.h"
 #include "platform/PlatformTuning.h"
+#include "platform/PlatformPerfOptions.h"
 #if PLATFORM_PS2
 #include "ps2/diagnostics/Ps2OptimizationValidation.h"
 #endif
@@ -5933,8 +5934,19 @@ void World::updateBlocksAndPlayCaveSounds()
     static int s_profTicksSeen = 0;
 #endif
 
+    // Wall-clock cut: once the budget is spent the remaining chunks of this
+    // tick's slice are left for the next tick (the cursor only advances over
+    // the chunks actually visited), so every chunk still gets its turns, just
+    // not all in one tick.
+    const long long budgetNs = platformPerf().randomTickBudget ? (long long)PLATFORM_RANDOM_TICK_BUDGET_US * 1000LL : 0LL;
+    const long_t budgetStartNs = budgetNs > 0 ? System::nanoTime() : 0;
+    size_t visitedDone = 0;
+
     for (size_t visited = 0; visited < visitCount; visited++)
     {
+        if (budgetNs > 0 && visited > 0 && System::nanoTime() - budgetStartNs > budgetNs)
+            break;
+        ++visitedDone;
         const size_t tickIndex = (s_tickCursor + visited) % totalChunks;
 #if PLATFORM_CACHE_RANDOM_TICK_CHUNKS
         const ChunkCoordIntPair &pair = positionsToUpdateOrder[tickIndex];
@@ -6107,7 +6119,13 @@ void World::updateBlocksAndPlayCaveSounds()
 #endif
     }
 
-    s_tickCursor = (s_tickCursor + visitCount) % totalChunks;
+    s_tickCursor = (s_tickCursor + visitedDone) % totalChunks;
+#if PLATFORM_PROFILE_RENDER_PHASES
+    platformProfileTickPhase("rtChunk", rtChunkNs);
+    platformProfileTickPhase("rtSnow", rtSnowNs);
+    platformProfileTickPhase("rtTicks", rtTicksNs);
+    platformProfileTickPhase("rtVisited", (long long)visitedDone * 1000000LL);
+#endif
 
 #if PLATFORM_RANDOM_TICK_PROFILE_INTERVAL > 0
     if (profSoundNs > s_profSoundMaxNs) s_profSoundMaxNs = profSoundNs;
@@ -6208,16 +6226,16 @@ void World::dropOldChunks()
 
 void World::randomDisplayUpdates(int x, int y, int z)
 {
-#if PLATFORM_SKIP_WORLD_PARTICLES
+    if (platformPerf().skipWorldParticles)
+    {
     // The only thing randomDisplayTick produces is particles — torch flames,
     // lava drips, smoke, portal sparkles. With particles skipped this loop runs
     // 1000 iterations of 6 RNG calls plus a getBlockId chunk lookup and then
     // throws every result away: measured as the 347ms `slowTick=randomDisplay`
     // spike in the FRAME log, the single largest tick phase after populate.
     // The particles knob was gating the spawn, not the search.
-    (void)x; (void)y; (void)z;
     return;
-#else
+    }
     const int RANGE = 16;
 #if PLATFORM_REUSE_RANDOM_DISPLAY_RNG
     Random &random = randomDisplayRandom;
@@ -6285,7 +6303,6 @@ void World::randomDisplayUpdates(int x, int y, int z)
             Block::blocksList[blockId]->randomDisplayTick(this, randX, randY, randZ, random);
         }
     }
-#endif
 }
 
 std::vector<Entity*> &World::getEntitiesWithinAABBExcludingEntity(Entity* entity, AxisAlignedBB* aabb)

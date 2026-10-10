@@ -13,6 +13,8 @@
 #include "Tessellator.h"
 #include "World.h"
 #include "platform/PlatformTuning.h"
+#include "platform/PlatformPerfOptions.h"
+#include "platform/Profiler.h"
 #if PLATFORM_PS2
 #include "ps2/diagnostics/Ps2OptimizationValidation.h"
 #endif
@@ -47,8 +49,9 @@ void EffectRenderer::addEffect(EntityFX *entityfx)
 
 void EffectRenderer::updateEffects()
 {
-#if PLATFORM_SKIP_WORLD_PARTICLES
-    // Particles are never drawn on this profile, but every one still ran its
+    if (platformPerf().skipWorldParticles)
+    {
+    // Particles are not drawn with this option, but every one still ran its
     // onUpdate with a block collision sweep until it died. A broken block adds
     // 64 of them (addBlockDestroyEffects): measured 2026-09-16 as the
     // 11-21 ms `effects` tick phase in the frames right after an edit, on top
@@ -165,6 +168,10 @@ void EffectRenderer::addBlockDestroyEffects(int_t i, int_t j, int_t k, int_t l, 
 
     Block *block = Block::blocksList[l];
     if (block == nullptr)
+        return;
+
+    // updateEffects() would delete all 64 of them on its next call anyway.
+    if (platformPerf().skipWorldParticles)
         return;
 
     int_t j1 = PLATFORM_BLOCK_DESTROY_PARTICLE_GRID;

@@ -25,6 +25,8 @@ private:
     LegacyOptionCheckbox *viewBobbingCheckbox;
     LegacyOptionCheckbox *cloudsCheckbox;
     LegacyOptionCheckbox *fogCheckbox;
+    // Vita: batched terrain draw path; null elsewhere.
+    LegacyOptionCheckbox *fastTerrainCheckbox = nullptr;
     // Wii only: the EFB->XFB deflicker filter; null elsewhere.
     LegacyOptionCheckbox *deflickerCheckbox;
 };

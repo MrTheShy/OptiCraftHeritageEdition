@@ -10,6 +10,7 @@
 
 #include "java/Arithmetic.h"
 #include "net/minecraft/src/Block.h"
+#include "net/minecraft/src/BlockLeavesBase.h"
 #include "net/minecraft/src/Chunk.h"
 #include "net/minecraft/src/ConnectedTextures.h"
 #include "net/minecraft/src/Config.h"
@@ -169,7 +170,29 @@ void WorldRenderer::updateRenderer()
         return;
     }
 
+    // Trees: Smart. Chosen when a build starts and kept for all its steps;
+    // set only around this renderer's step (game thread).
+    if (!pcLegacyBuildActive)
+        pcLegacyBuildFarLeaves = Config::isTreesSmart() &&
+            pcLegacyViewerDistanceSq() > PC_LEGACY_FAR_LEAVES_DISTANCE * PC_LEGACY_FAR_LEAVES_DISTANCE;
+    struct FarLeavesScope
+    {
+        explicit FarLeavesScope(bool on) { BlockLeavesBase::meshAsFast = on; }
+        ~FarLeavesScope() { BlockLeavesBase::meshAsFast = false; }
+    } farLeaves(pcLegacyBuildFarLeaves);
     pcLegacyBuildRendererStep(PLATFORM_CHUNK_BUILD_BLOCKS_PER_STEP);
+}
+
+double WorldRenderer::pcLegacyViewerX = 0.0;
+double WorldRenderer::pcLegacyViewerY = 0.0;
+double WorldRenderer::pcLegacyViewerZ = 0.0;
+
+float WorldRenderer::pcLegacyViewerDistanceSq() const
+{
+    const float dx = static_cast<float>(posX + 8 - pcLegacyViewerX);
+    const float dy = static_cast<float>(posY + 8 - pcLegacyViewerY);
+    const float dz = static_cast<float>(posZ + 8 - pcLegacyViewerZ);
+    return dx * dx + dy * dy + dz * dz;
 }
 
 void WorldRenderer::pcLegacyResetBuildState()

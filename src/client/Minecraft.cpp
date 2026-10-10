@@ -6,6 +6,7 @@
 #include "platform/Log.h"
 #include "platform/ConsoleAspectRatio.h"
 #include "platform/PlatformTuning.h"
+#include "platform/PlatformPerfOptions.h"
 #include "platform/PlatformCompat.h"
 #include "platform/world/StreamingFrameBudget.h"
 #include "platform/world/LightingFrameBudget.h"
@@ -591,8 +592,23 @@ void Minecraft::startGame()
     }
     PLATFORM_BOOT_LOG(PLATFORM_BOOT_PREFIX " SaveConverter ready\n");
     PLATFORM_BOOT_LOG(PLATFORM_BOOT_PREFIX " GameSettings begin\n");
+#ifdef VITA_PLATFORM
+    // The profile defaults are for a fresh install only: applied after
+    // options.txt loads, they reset the player's sky/weather/cloud/particle
+    // choices on every launch.
+    bool firstLaunch = true;
+    if (std::FILE *existing = std::fopen((mcDataDir->toString() + "/options.txt").c_str(), "rb"))
+    {
+        firstLaunch = false;
+        std::fclose(existing);
+    }
+    gameSettings = new GameSettings(this, mcDataDir->toString());
+    if (firstLaunch)
+        ClientPlatformPolicy::applyGameSettingsDefaults(gameSettings);
+#else
     gameSettings = new GameSettings(this, mcDataDir->toString());
     ClientPlatformPolicy::applyGameSettingsDefaults(gameSettings);
+#endif
     PLATFORM_BOOT_LOG(PLATFORM_BOOT_PREFIX " GameSettings ready\n");
     MC_LOG_DEBUG("client.config", "renderDistance=%d preload=%d blocks cache=%d unload=%d "
            "gen=%d/tick mesh=%d/%dms loadMin=%dms warmup=%dms\n",
@@ -1956,7 +1972,7 @@ void Minecraft::runTick()
     {
         clientPhaseStartNs = System::nanoTime();
         static int_t s_dynamicTexturePhase = 0;
-        const int_t everyN = PLATFORM_DYNAMIC_TEXTURE_INTERVAL_TICKS;
+        const int_t everyN = platformPerf().halfRateTextures ? PLATFORM_DYNAMIC_TEXTURE_INTERVAL_TICKS : 1;
         const bool runDynamicTextures = (everyN <= 1) || ((s_dynamicTexturePhase % everyN) == 0);
         ++s_dynamicTexturePhase;
 #ifdef VITA_PLATFORM
@@ -2330,6 +2346,13 @@ void Minecraft::runTick()
             clientPhaseStartNs = System::nanoTime();
             theWorld->tick();
             ClientProfiler::tickPhase("worldTick", System::nanoTime() - clientPhaseStartNs);
+        }
+        else if (theWorld->getIChunkProvider() != nullptr)
+        {
+            // Paused (a menu in single player): chunk streaming goes on, so a
+            // render distance raised in the options fills in behind the menu
+            // instead of when it closes. No world time passes.
+            theWorld->getIChunkProvider()->unload100OldestChunks();
         }
         if (!isGamePaused && theWorld != nullptr)
         {

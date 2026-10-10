@@ -100,9 +100,9 @@ void pcLegacyRunMeshScheduler(
     bool paused)
 {
     const std::size_t fixedRendererCapacity = static_cast<std::size_t>(
-        PC_LEGACY_VISIBLE_CHUNK_DIAMETER *
-        PC_LEGACY_VISIBLE_CHUNK_DIAMETER *
-        PC_LEGACY_VERTICAL_CHUNK_COUNT);
+        PLATFORM_VISIBLE_CHUNK_DIAMETER *
+        PLATFORM_VISIBLE_CHUNK_DIAMETER *
+        PLATFORM_VERTICAL_CHUNK_COUNT);
     if (s_candidates.capacity() < fixedRendererCapacity)
         s_candidates.reserve(fixedRendererCapacity);
 

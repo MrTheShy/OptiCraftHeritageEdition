@@ -20,6 +20,7 @@
 #include "platform/GameSettingsBackend.h"
 #include "platform/PlatformKeyBindings.h"
 #include "platform/PlatformTuning.h"
+#include "platform/PlatformPerfOptions.h"
 #include "platform/PlatformUserSettings.h"
 #include "platform/Storage.h"
 #include "net/minecraft/src/legacy/LegacyUiScalePolicy.h"
@@ -157,7 +158,7 @@ void GameSettings::loadOptions()
 				if (key == "advancedOpengl")
 					advancedOpengl = value == "true";
 				if (key == "fpsLimit")
-					limitFramerate = parseIntJava(value);
+					limitFramerate = Config::limit((int_t)parseIntJava(value), 0, 2);
 				if (key == "difficulty")
 					difficulty = parseIntJava(value);
 				if (key == "fancyGraphics")
@@ -247,7 +248,7 @@ void GameSettings::loadOptions()
 				if (key == "ofCloudsHeight")
 					ofCloudsHeight = Config::limit(parseFloat(value), 0.0f, 1.0f);
 				if (key == "ofTrees")
-					ofTrees = Config::limit((int_t)parseIntJava(value), 0, 2);
+					ofTrees = Config::limit((int_t)parseIntJava(value), 0, 3);
 				if (key == "ofGrass")
 					ofGrass = Config::limit((int_t)parseIntJava(value), 0, 2);
 				if (key == "ofRain")
@@ -286,6 +287,8 @@ void GameSettings::loadOptions()
 					ofChunkUpdates = Config::limit((int_t)parseIntJava(value), 1, 5);
 				if (key == "ofChunkUpdatesDynamic")
 					ofChunkUpdatesDynamic = value == "true";
+				if (key == "ofLightingUpdates")
+					ofLightingUpdates = Config::limit((int_t)parseIntJava(value), 0, 2);
 				if (key == "ofFarView")
 					ofFarView = value == "true";
 				if (key == "ofTime")
@@ -299,6 +302,16 @@ void GameSettings::loadOptions()
 					ofSunMoon = value == "true";
 				if (key == "ofDepthFog")
 					ofDepthFog = value == "true";
+				if (key == "ofFastTerrain")
+					ofFastTerrain = value == "true";
+				if (key == "ofTerrainShader")
+					ofTerrainShader = value == "true";
+				if (key == "ofShaderEnhanced")
+					ofShaderEnhanced = value == "true";
+				if (key == "showHeldItemName")
+					showHeldItemName = value == "true";
+				if (key == "ofEntityShader")
+					ofEntityShader = value == "true";
 				if (key == "ofProfiler")
 					ofProfiler = value == "true";
 				if (key == "ofBetterSnow")
@@ -327,6 +340,8 @@ void GameSettings::loadOptions()
 					ofCustomFonts = value == "true";
 				if (key == "ofRenderDistanceFine")
 					ofRenderDistanceFine = Config::limit((int_t)parseIntJava(value), 32, Config::getMaxRenderDistanceFine());
+				if (key == "verticalSections")
+					verticalSections = Config::limit((int_t)parseIntJava(value), 3, 8);
 				if (key == "ofVoidParticles")
 					ofVoidParticles = value == "true";
 				if (key == "ofWaterParticles")
@@ -343,6 +358,14 @@ void GameSettings::loadOptions()
 					ofAnimatedItems = value == "true";
 				if (key == "ofAnimatedTextures")
 					ofAnimatedTextures = value == "true";
+#if PLATFORM_PC_LEGACY
+				for (int_t perfIndex = 0; perfIndex < PLATFORM_PERF_OPTION_COUNT; ++perfIndex)
+				{
+					const PlatformPerfOptionRow &row = platformPerfOptionRows()[perfIndex];
+					if (key == row.key)
+						platformPerfMutable().*row.field = value == "true";
+				}
+#endif
 			}
 			catch (...)
 			{
@@ -360,6 +383,11 @@ void GameSettings::loadOptions()
 	fovSetting = Config::limit(fovSetting, 0.0f, 1.0f);
 
 	ofRenderDistanceFine = Config::limit(ofRenderDistanceFine, 32, Config::getMaxRenderDistanceFine());
+#ifdef VITA_PLATFORM
+	// Keep the Far/Normal/Short/Tiny index in step with the fine distance;
+	// loading derives them separately and they could disagree after a restart.
+	platformGameSettingsUpdateRenderDistanceFromFine(ofRenderDistanceFine, renderDistance);
+#endif
 	platformGameSettingsFinalizeLoad(*this);
 	PlatformUserSettings::setControllerDeadzone(controllerDeadzone);
 	syncKeyBindingsToPlatform();
@@ -410,13 +438,15 @@ void GameSettings::saveOptions()
 		"ofAnimatedWater", "ofAnimatedLava", "ofAnimatedFire", "ofAnimatedPortal",
 		"ofAnimatedRedstone", "ofAnimatedExplosion", "ofAnimatedFlame",
 		"ofAnimatedSmoke", "ofFastDebugInfo", "ofAutoSaveTicks", "ofBetterGrass",
-		"ofWeather", "ofSky", "ofStars", "ofChunkUpdates", "ofChunkUpdatesDynamic",
-		"ofFarView", "ofTime", "ofClearWater", "ofSunMoon", "ofDepthFog",
+		"ofWeather", "ofSky", "ofStars", "ofChunkUpdates", "ofChunkUpdatesDynamic", "ofLightingUpdates",
+		"ofFarView", "ofTime", "ofClearWater", "ofSunMoon", "ofDepthFog", "ofFastTerrain", "ofTerrainShader", "ofShaderEnhanced", "showHeldItemName", "ofEntityShader",
 		"ofProfiler", "ofBetterSnow", "ofSwampColors", "ofSmoothBiomes", "ofRandomMobs", "ofCustomColors", "ofConnectedTextures", "ofNaturalTextures",
-		"ofMipmapLevel", "ofMipmapLinear", "ofAaLevel", "ofAfLevel", "ofCustomFonts", "ofRenderDistanceFine",
+		"ofMipmapLevel", "ofMipmapLinear", "ofAaLevel", "ofAfLevel", "ofCustomFonts", "ofRenderDistanceFine", "verticalSections",
 		"ofVoidParticles", "ofWaterParticles", "ofRainSplash", "ofPortalParticles",
 		"ofDrippingWaterLava", "ofAnimatedTerrain", "ofAnimatedItems", "ofAnimatedTextures"
 	};
+	for (int_t perfIndex = 0; perfIndex < PLATFORM_PERF_OPTION_COUNT; ++perfIndex)
+		knownKeys.insert(platformPerfOptionRows()[perfIndex].key);
 #if PLATFORM_HAS_ASPECT_RATIO_OPTION
 	knownKeys.insert("widescreen");
 	knownKeys.insert("aspectRatio");
@@ -527,11 +557,17 @@ void GameSettings::saveOptions()
 	printwriter << "ofStars:" << (ofStars ? "true" : "false") << "\n";
 	printwriter << "ofChunkUpdates:" << ofChunkUpdates << "\n";
 	printwriter << "ofChunkUpdatesDynamic:" << (ofChunkUpdatesDynamic ? "true" : "false") << "\n";
+	printwriter << "ofLightingUpdates:" << ofLightingUpdates << "\n";
 	printwriter << "ofFarView:" << (ofFarView ? "true" : "false") << "\n";
 	printwriter << "ofTime:" << ofTime << "\n";
 	printwriter << "ofClearWater:" << (ofClearWater ? "true" : "false") << "\n";
 	printwriter << "ofSunMoon:" << (ofSunMoon ? "true" : "false") << "\n";
 	printwriter << "ofDepthFog:" << (ofDepthFog ? "true" : "false") << "\n";
+	printwriter << "ofFastTerrain:" << (ofFastTerrain ? "true" : "false") << "\n";
+	printwriter << "ofTerrainShader:" << (ofTerrainShader ? "true" : "false") << "\n";
+	printwriter << "ofShaderEnhanced:" << (ofShaderEnhanced ? "true" : "false") << "\n";
+	printwriter << "showHeldItemName:" << (showHeldItemName ? "true" : "false") << "\n";
+	printwriter << "ofEntityShader:" << (ofEntityShader ? "true" : "false") << "\n";
 	printwriter << "ofProfiler:" << (ofProfiler ? "true" : "false") << "\n";
 	printwriter << "ofBetterSnow:" << (ofBetterSnow ? "true" : "false") << "\n";
 	printwriter << "ofSwampColors:" << (ofSwampColors ? "true" : "false") << "\n";
@@ -546,6 +582,7 @@ void GameSettings::saveOptions()
 	printwriter << "ofAfLevel:" << ofAfLevel << "\n";
 	printwriter << "ofCustomFonts:" << (ofCustomFonts ? "true" : "false") << "\n";
 	printwriter << "ofRenderDistanceFine:" << ofRenderDistanceFine << "\n";
+	printwriter << "verticalSections:" << verticalSections << "\n";
 	printwriter << "ofVoidParticles:" << (ofVoidParticles ? "true" : "false") << "\n";
 	printwriter << "ofWaterParticles:" << (ofWaterParticles ? "true" : "false") << "\n";
 	printwriter << "ofRainSplash:" << (ofRainSplash ? "true" : "false") << "\n";
@@ -554,6 +591,13 @@ void GameSettings::saveOptions()
 	printwriter << "ofAnimatedTerrain:" << (ofAnimatedTerrain ? "true" : "false") << "\n";
 	printwriter << "ofAnimatedItems:" << (ofAnimatedItems ? "true" : "false") << "\n";
 	printwriter << "ofAnimatedTextures:" << (ofAnimatedTextures ? "true" : "false") << "\n";
+#if PLATFORM_PC_LEGACY
+	for (int_t perfIndex = 0; perfIndex < PLATFORM_PERF_OPTION_COUNT; ++perfIndex)
+	{
+		const PlatformPerfOptionRow &row = platformPerfOptionRows()[perfIndex];
+		printwriter << row.key << ":" << ((platformPerf().*row.field) ? "true" : "false") << "\n";
+	}
+#endif
 
 	const std::string output = printwriter.str();
 	bool saved = false;

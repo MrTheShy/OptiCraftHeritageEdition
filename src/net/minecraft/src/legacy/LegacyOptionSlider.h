@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cstdint>
+
 #include "net/minecraft/src/GuiButton.h"
 
 class EnumOptions;
@@ -43,4 +45,10 @@ private:
     float_t sliderValue;
     bool dragging;
     bool selected;
+    // Options whose change rebuilds the renderer grid (distances) are applied
+    // while dragging at most every kHeavyApplyMs, and on release.
+    bool heavyPending = false;
+    std::uint64_t heavyAppliedUs = 0;
+    bool isHeavyOption() const;
+    void applyHeavyPending(bool force);
 };

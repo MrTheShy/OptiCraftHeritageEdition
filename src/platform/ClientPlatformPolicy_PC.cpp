@@ -66,7 +66,12 @@ void releaseWorldEntryAssets(RenderEngine*)
 
 int panoramaSampleGrid()
 {
+#ifdef VITA_PLATFORM
+    // 2x2 like PS2: 24 draws instead of 384; every vitaGL draw call is costly.
+    return 2;
+#else
     return 8;
+#endif
 }
 
 

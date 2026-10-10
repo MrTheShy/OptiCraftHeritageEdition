@@ -207,13 +207,14 @@ void BlockLeaves::harvestBlock(World *world, EntityPlayer *entityplayer, int_t i
 
 int_t BlockLeaves::damageDropped(int_t i) { return i & 3; }
 
-bool BlockLeaves::isOpaqueCube() { return !graphicsLevel; }
+bool BlockLeaves::isOpaqueCube() { return !graphicsLevel || meshAsFast; }
 
 int_t BlockLeaves::getBlockTextureFromSideAndMetadata(int_t i, int_t j)
 {
-	if ((j & 3) == 1) return blockIndexInTexture + 80;
-	if ((j & 3) == 3) return blockIndexInTexture + 144;
-	return blockIndexInTexture;
+	const int_t base = meshAsFast ? baseIndexInPNG + 1 : blockIndexInTexture;
+	if ((j & 3) == 1) return base + 80;
+	if ((j & 3) == 3) return base + 144;
+	return base;
 }
 
 void BlockLeaves::setGraphicsLevel(bool flag)

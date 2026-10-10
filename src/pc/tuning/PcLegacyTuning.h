@@ -65,6 +65,10 @@
 // what is left of the target after this frame's ticks and the rest of the
 // previous frame's render, within [MIN, MAX]. 0 = the fixed budget above.
 #define PC_LEGACY_MESH_FRAME_TARGET_US 14000
+// Trees: Smart. Sections whose centre is farther than this (blocks) mesh
+// their leaves as Fast; a far-built one comes back Fancy under NEAR.
+#define PC_LEGACY_FAR_LEAVES_DISTANCE 48.0f
+#define PC_LEGACY_NEAR_LEAVES_DISTANCE 40.0f
 #define PC_LEGACY_MESH_BUDGET_MIN_US 600
 #define PC_LEGACY_MESH_BUDGET_MAX_US 8000
 

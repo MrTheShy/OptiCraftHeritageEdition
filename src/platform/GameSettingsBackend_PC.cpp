@@ -51,7 +51,7 @@ int_t platformGameSettingsDefaultConnectedTextures()
 
 int_t platformGameSettingsCycleRenderDistance(int_t current, int_t delta)
 {
-#if PLATFORM_PC_LEGACY
+#if PLATFORM_PC_LEGACY && !defined(VITA_PLATFORM)
 	const int_t index = current <= 2 ? 0 : 1;
 	int_t next = (index + delta) % 2;
 	if (next < 0)
@@ -64,7 +64,7 @@ int_t platformGameSettingsCycleRenderDistance(int_t current, int_t delta)
 
 int_t platformGameSettingsClampRenderDistance(int_t value)
 {
-#if PLATFORM_PC_LEGACY
+#if PLATFORM_PC_LEGACY && !defined(VITA_PLATFORM)
 	return value < 2 ? 2 : (value > 3 ? 3 : value);
 #else
 	return value;

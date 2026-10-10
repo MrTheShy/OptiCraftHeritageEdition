@@ -28,7 +28,7 @@ void GuiDetailSettingsOF::initGui()
 	EnumOptions *enumOptions[] = {
 		EnumOptions::CLOUDS, EnumOptions::CLOUD_HEIGHT, EnumOptions::TREES, EnumOptions::GRASS,
 		EnumOptions::WATER, EnumOptions::RAIN, EnumOptions::SKY, EnumOptions::STARS,
-		EnumOptions::SUN_MOON, EnumOptions::DEPTH_FOG
+		EnumOptions::SUN_MOON, EnumOptions::DEPTH_FOG, EnumOptions::HELD_ITEM_NAME
 	};
 
 	StringTranslate *tr = StringTranslate::getInstance();

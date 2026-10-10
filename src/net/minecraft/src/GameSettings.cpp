@@ -31,6 +31,7 @@
 #include "platform/GameSettingsBackend.h"
 #include "platform/PlatformKeyBindings.h"
 #include "platform/PlatformTuning.h"
+#include "platform/PlatformPerfOptions.h"
 #include "platform/PlatformUserSettings.h"
 #include "net/minecraft/src/legacy/LegacyUiPolicy.h"
 #include "net/minecraft/src/legacy/LegacyUiScalePolicy.h"
@@ -179,11 +180,17 @@ void GameSettings::setDefaults()
     ofStars = true;
     ofChunkUpdates = 1;
     ofChunkUpdatesDynamic = true;
+    ofLightingUpdates = 1;
     ofFarView = false;
     ofTime = 0;
     ofClearWater = false;
     ofSunMoon = true;
     ofDepthFog = true;
+    ofFastTerrain = true;
+    ofTerrainShader = false;
+    ofShaderEnhanced = false;
+    showHeldItemName = false;
+    ofEntityShader = false; // off until the on-device colour bug is fixed
     ofProfiler = false;
     ofBetterSnow = false;
     ofSwampColors = true;
@@ -198,6 +205,7 @@ void GameSettings::setDefaults()
     ofAfLevel = 1;
     ofCustomFonts = PLATFORM_OPTIFINE_CUSTOM_FONTS != 0;
     ofRenderDistanceFine = 128;
+    verticalSections = 5;
     ofVoidParticles = true;
     ofWaterParticles = true;
     ofRainSplash = true;
@@ -441,7 +449,7 @@ void GameSettings::resetControlBindingsToDefaults()
     saveOptions();
 }
 
-void GameSettings::setOptionFloatValue(const EnumOptions *enumoptions, float f)
+void GameSettings::setOptionFloatValue(const EnumOptions *enumoptions, float f, bool save)
 {
     if (enumoptions == EnumOptions::MUSIC)
         musicVolume = f;
@@ -484,7 +492,17 @@ void GameSettings::setOptionFloatValue(const EnumOptions *enumoptions, float f)
             reloadChunkRenderers();
         }
     }
-    saveOptions();
+    if (enumoptions == EnumOptions::VERTICAL_DISTANCE)
+    {
+        const int_t sections = Config::limit(3 + (int_t)(f * 5.0f + 0.5f), 3, 8);
+        if (sections != verticalSections)
+        {
+            verticalSections = sections;
+            reloadChunkRenderers();
+        }
+    }
+    if (save)
+        saveOptions();
 }
 
 void GameSettings::setLegacyUiEnabled(bool enabled)
@@ -504,6 +522,17 @@ void GameSettings::setLegacyUiEnabled(bool enabled)
 
 void GameSettings::setOptionValue(const EnumOptions *enumoptions, int_t i)
 {
+    {
+        const int_t perfIndex = enumoptions->returnEnumOrdinal() - PLATFORM_PERF_OPTION_FIRST_ORDINAL;
+        if (perfIndex >= 0 && perfIndex < PLATFORM_PERF_OPTION_COUNT)
+        {
+            PlatformPerfOptions &perf = platformPerfMutable();
+            bool PlatformPerfOptions::*field = platformPerfOptionRows()[perfIndex].field;
+            perf.*field = !(perf.*field);
+            saveOptions();
+            return;
+        }
+    }
     if (enumoptions == EnumOptions::INVERT_MOUSE)
         invertMouse = !invertMouse;
     if (enumoptions == EnumOptions::RENDER_DISTANCE)
@@ -647,7 +676,7 @@ void GameSettings::setOptionValue(const EnumOptions *enumoptions, int_t i)
     if (enumoptions == EnumOptions::TREES)
     {
         ofTrees++;
-        if (ofTrees > 2)
+        if (ofTrees > 3)
             ofTrees = 0;
         invalidateChunkMeshes();
     }
@@ -732,6 +761,8 @@ void GameSettings::setOptionValue(const EnumOptions *enumoptions, int_t i)
     }
     if (enumoptions == EnumOptions::CHUNK_UPDATES_DYNAMIC)
         ofChunkUpdatesDynamic = !ofChunkUpdatesDynamic;
+    if (enumoptions == EnumOptions::LIGHTING_UPDATES)
+        ofLightingUpdates = (ofLightingUpdates + 1) % 3;
     if (enumoptions == EnumOptions::FAR_VIEW)
     {
         ofFarView = !ofFarView;
@@ -752,6 +783,16 @@ void GameSettings::setOptionValue(const EnumOptions *enumoptions, int_t i)
         ofSunMoon = !ofSunMoon;
     if (enumoptions == EnumOptions::DEPTH_FOG)
         ofDepthFog = !ofDepthFog;
+    if (enumoptions == EnumOptions::FAST_TERRAIN)
+        ofFastTerrain = !ofFastTerrain; // RenderGlobal notices the change and rebuilds the sections
+    if (enumoptions == EnumOptions::TERRAIN_SHADER)
+        ofTerrainShader = !ofTerrainShader; // same rebuild
+    if (enumoptions == EnumOptions::SHADER_EFFECTS)
+        ofShaderEnhanced = !ofShaderEnhanced; // uniforms only
+    if (enumoptions == EnumOptions::HELD_ITEM_NAME)
+        showHeldItemName = !showHeldItemName;
+    if (enumoptions == EnumOptions::ENTITY_SHADER)
+        ofEntityShader = !ofEntityShader; // read per entity, nothing to rebuild
     if (enumoptions == EnumOptions::PROFILER)
         ofProfiler = !ofProfiler;
     if (enumoptions == EnumOptions::BETTER_SNOW)
@@ -867,6 +908,8 @@ float GameSettings::getOptionFloatValue(const EnumOptions *enumoptions)
     if (enumoptions == EnumOptions::RENDER_DISTANCE_FINE)
         return (float)(ofRenderDistanceFine - 32) /
                (float)(Config::getMaxRenderDistanceFine() - 32);
+    if (enumoptions == EnumOptions::VERTICAL_DISTANCE)
+        return (float)(verticalSections - 3) / 5.0f;
     return 0.0f;
 }
 
@@ -890,6 +933,15 @@ bool GameSettings::getOptionOrdinalValue(const EnumOptions *enumoptions)
 
 std::string GameSettings::getKeyBinding(const EnumOptions *enumoptions)
 {
+    {
+        const int_t perfIndex = enumoptions->returnEnumOrdinal() - PLATFORM_PERF_OPTION_FIRST_ORDINAL;
+        if (perfIndex >= 0 && perfIndex < PLATFORM_PERF_OPTION_COUNT)
+        {
+            const PlatformPerfOptionRow &row = platformPerfOptionRows()[perfIndex];
+            const bool on = platformPerf().*row.field != row.shownInverted;
+            return uiText(row.label) + ": " + (on ? uiText("ON") : uiText("OFF"));
+        }
+    }
     std::string s = enumoptions == EnumOptions::ASPECT_RATIO
         ? uiText("Aspect Ratio") + ": "
         : (enumoptions == EnumOptions::SPLITSCREEN_LAYOUT
@@ -925,6 +977,8 @@ std::string GameSettings::getKeyBinding(const EnumOptions *enumoptions)
             const int_t difference = ofRenderDistanceFine - baseDistance;
             return difference == 0 ? s + label : s + label + " +" + std::to_string(difference);
         }
+        if (enumoptions == EnumOptions::VERTICAL_DISTANCE)
+            return s + (verticalSections >= 8 ? uiText("Full") : std::to_string(verticalSections * 16) + " " + uiText("blocks"));
         if (f == 0.0f)
             return s + translateKey("options.off");
         return s + std::to_string((int_t)(f * 100.0f)) + "%";
@@ -954,7 +1008,15 @@ std::string GameSettings::getKeyBinding(const EnumOptions *enumoptions)
     if (enumoptions == EnumOptions::PARTICLES)
         return s + translateKey(PARTICLES[particleSetting]);
     if (enumoptions == EnumOptions::FRAMERATE_LIMIT)
+    {
+#ifdef VITA_PLATFORM
+        // The cap is the display's vsync interval (Minecraft::run), so say the rate.
+        static const char *const VITA_FRAME_CAPS[3] = { "Unlimited", "60 FPS", "30 FPS" };
+        return s + uiText(VITA_FRAME_CAPS[limitFramerate]);
+#else
         return s + translateKey(LIMIT_FRAMERATES[limitFramerate]);
+#endif
+    }
     if (enumoptions == EnumOptions::GRAPHICS)
     {
         if (fancyGraphics)
@@ -1010,6 +1072,7 @@ std::string GameSettings::getKeyBinding(const EnumOptions *enumoptions)
         {
         case 1: return s + uiText("Fast");
         case 2: return s + uiText("Fancy");
+        case 3: return s + uiText("Smart");
         }
         return s + uiText("Default");
     }
@@ -1103,6 +1166,15 @@ std::string GameSettings::getKeyBinding(const EnumOptions *enumoptions)
         return s + std::to_string(ofChunkUpdates);
     if (enumoptions == EnumOptions::CHUNK_UPDATES_DYNAMIC)
         return s + (ofChunkUpdatesDynamic ? uiText("ON") : uiText("OFF"));
+    if (enumoptions == EnumOptions::LIGHTING_UPDATES)
+    {
+        switch (ofLightingUpdates)
+        {
+        case 0: return s + uiText("Smooth");
+        case 2: return s + uiText("Fastest");
+        }
+        return s + uiText("Fast");
+    }
     if (enumoptions == EnumOptions::FAR_VIEW)
         return s + (ofFarView ? uiText("ON") : uiText("OFF"));
     if (enumoptions == EnumOptions::TIME)
@@ -1119,6 +1191,16 @@ std::string GameSettings::getKeyBinding(const EnumOptions *enumoptions)
         return s + (ofSunMoon ? uiText("ON") : uiText("OFF"));
     if (enumoptions == EnumOptions::DEPTH_FOG)
         return s + (ofDepthFog ? uiText("ON") : uiText("OFF"));
+    if (enumoptions == EnumOptions::FAST_TERRAIN)
+        return s + (ofFastTerrain ? uiText("ON") : uiText("OFF"));
+    if (enumoptions == EnumOptions::TERRAIN_SHADER)
+        return s + (ofTerrainShader ? uiText("ON") : uiText("OFF"));
+    if (enumoptions == EnumOptions::SHADER_EFFECTS)
+        return s + (ofShaderEnhanced ? uiText("Enhanced") : uiText("Normal"));
+    if (enumoptions == EnumOptions::HELD_ITEM_NAME)
+        return s + (showHeldItemName ? uiText("ON") : uiText("OFF"));
+    if (enumoptions == EnumOptions::ENTITY_SHADER)
+        return s + (ofEntityShader ? uiText("ON") : uiText("OFF"));
     if (enumoptions == EnumOptions::PROFILER)
         return s + (ofProfiler ? uiText("ON") : uiText("OFF"));
     if (enumoptions == EnumOptions::BETTER_SNOW)

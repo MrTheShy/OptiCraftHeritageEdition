@@ -1,6 +1,8 @@
 #include "net/minecraft/src/UiStrings.h"
 #include "LegacyVideoOptions.h"
 
+#include <algorithm>
+
 #include "LegacyGuiButton.h"
 #include "LegacyOptionCheckbox.h"
 #include "LegacyOptionSlider.h"
@@ -12,6 +14,7 @@
 #include "net/minecraft/src/Minecraft.h"
 #include "platform/PlatformConfig.h"
 #include "platform/PlatformUserSettings.h"
+#include "platform/PlatformTuning.h"
 
 namespace
 {
@@ -25,6 +28,10 @@ enum LegacyVideoButtonId
     BUTTON_FOG = 305,
     BUTTON_BRIGHTNESS = 306,
     BUTTON_DEFLICKER = 307,
+    BUTTON_FAST_TERRAIN = 308,
+    BUTTON_FRAME_CAP = 309,
+    BUTTON_LIGHT_UPDATES = 310,
+    BUTTON_VERTICAL_DISTANCE = 311,
     BUTTON_DONE = 399
 };
 
@@ -40,12 +47,29 @@ LegacyVideoOptions::LegacyVideoOptions(GuiScreen *parent, GameSettings *settings
 void LegacyVideoOptions::initGui()
 {
 #if PLATFORM_WII
-    const int_t rowCount = 7;
+    int_t rowCount = 7;
 #elif PLATFORM_PS2
-    const int_t rowCount = 6;
+    int_t rowCount = 6;
+#elif PLATFORM_TERRAIN_VBO_BATCH
+    int_t rowCount = 9;
 #else
-    const int_t rowCount = 8;
+    int_t rowCount = 8;
 #endif
+    // Frame cap (display vsync) and Light Updates: cycling buttons below the
+    // sliders, added only while the panel still has room for them.
+    int_t extraRows = 0;
+#ifdef VITA_PLATFORM
+    rowCount += 1; // Vertical Distance slider
+    extraRows = 2;
+#elif PLATFORM_LIGHTING_EXTRA_BUDGET_US > 0
+    extraRows = 1;
+#endif
+    if (extraRows > 0)
+    {
+        const int_t fit = legacyOptionsMaxRows(width, height, LegacyOptionsLayoutPreset::Compact) - rowCount;
+        extraRows = std::max<int_t>(0, std::min<int_t>(extraRows, fit));
+        rowCount += extraRows;
+    }
     configureLegacyLayout(rowCount, true, LegacyOptionsLayoutPreset::Compact);
     const int_t x = legacyLayout.contentX;
     const int_t w = legacyLayout.contentWidth;
@@ -89,10 +113,36 @@ void LegacyVideoOptions::initGui()
     deflickerCheckbox = nullptr;
 #endif
 
+#if PLATFORM_TERRAIN_VBO_BATCH
+    fastTerrainCheckbox = new LegacyOptionCheckbox(BUTTON_FAST_TERRAIN, x, legacyLayout.rowY(row++), w, h,
+        uiText("Fast Terrain"), settings->ofFastTerrain);
+    controlList.push_back(fastTerrainCheckbox);
+#else
+    fastTerrainCheckbox = nullptr;
+#endif
+
     controlList.push_back(new LegacyOptionSlider(BUTTON_RENDER_DISTANCE, x, legacyLayout.rowY(row++), w, h,
         settings, EnumOptions::RENDER_DISTANCE_FINE));
+#ifdef VITA_PLATFORM
+    controlList.push_back(new LegacyOptionSlider(BUTTON_VERTICAL_DISTANCE, x, legacyLayout.rowY(row++), w, h,
+        settings, EnumOptions::VERTICAL_DISTANCE));
+#endif
     controlList.push_back(new LegacyOptionSlider(BUTTON_BRIGHTNESS, x, legacyLayout.rowY(row++), w, h,
         settings, EnumOptions::BRIGHTNESS));
+#ifdef VITA_PLATFORM
+    if (extraRows >= 1)
+        controlList.push_back(new LegacyGuiButton(BUTTON_FRAME_CAP, x, legacyLayout.rowY(row++), w, h,
+            settings->getKeyBinding(EnumOptions::FRAMERATE_LIMIT)));
+#endif
+#if PLATFORM_LIGHTING_EXTRA_BUDGET_US > 0
+#ifdef VITA_PLATFORM
+    if (extraRows >= 2)
+#else
+    if (extraRows >= 1)
+#endif
+        controlList.push_back(new LegacyGuiButton(BUTTON_LIGHT_UPDATES, x, legacyLayout.rowY(row++), w, h,
+            settings->getKeyBinding(EnumOptions::LIGHTING_UPDATES)));
+#endif
     controlList.push_back(new LegacyGuiButton(BUTTON_DONE, x, legacyLayout.rowY(row), w, h, uiText("Done")));
 }
 
@@ -107,6 +157,8 @@ void LegacyVideoOptions::syncCheckboxes()
         fogCheckbox->setChecked(legacyFogChecked(settings->ofFogOff));
     if (deflickerCheckbox != nullptr)
         deflickerCheckbox->setChecked(settings->wiiDeflicker);
+    if (fastTerrainCheckbox != nullptr)
+        fastTerrainCheckbox->setChecked(settings->ofFastTerrain);
 }
 
 void LegacyVideoOptions::actionPerformed(GuiButton *button)
@@ -144,6 +196,21 @@ void LegacyVideoOptions::actionPerformed(GuiButton *button)
         PlatformUserSettings::setDisplayDeflicker(settings->wiiDeflicker);
         settings->saveOptions();
         syncCheckboxes();
+        return;
+    case BUTTON_FAST_TERRAIN:
+        settings->setOptionValue(EnumOptions::FAST_TERRAIN, 1);
+        settings->saveOptions();
+        syncCheckboxes();
+        return;
+    case BUTTON_FRAME_CAP:
+        settings->setOptionValue(EnumOptions::FRAMERATE_LIMIT, 1);
+        button->displayString = settings->getKeyBinding(EnumOptions::FRAMERATE_LIMIT);
+        settings->saveOptions();
+        return;
+    case BUTTON_LIGHT_UPDATES:
+        settings->setOptionValue(EnumOptions::LIGHTING_UPDATES, 1);
+        button->displayString = settings->getKeyBinding(EnumOptions::LIGHTING_UPDATES);
+        settings->saveOptions();
         return;
     case BUTTON_DONE:
         returnToParent();

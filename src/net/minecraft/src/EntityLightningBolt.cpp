@@ -5,6 +5,8 @@
 #include "AxisAlignedBB.h"
 #include "Block.h"
 #include "BlockFire.h"
+#include "Config.h"
+#include "platform/Profiler.h"
 #include "Entity.h"
 #include "MathHelper.h"
 #include "NBTTagCompound.h"
@@ -83,7 +85,11 @@ void EntityLightningBolt::onUpdate()
 			Entity *entity = list[l];
 			entity->onStruckByLightning(this);
 		}
-		worldObj->field_27172_i = 2;
+		// Weather OFF hides rain and thunder; on a server the bolts still
+		// arrive, and their sky flash was the only weather left visible.
+		if (Config::isWeatherEnabled())
+			worldObj->field_27172_i = 2;
+		platformProfileTickPhase("#flash", 1);
 	}
 }
 

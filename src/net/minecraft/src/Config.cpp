@@ -1,7 +1,15 @@
 #include "platform/Log.h"
 #include "Config.h"
 
+#include <algorithm>
+#include <cmath>
 #include <iostream>
+#include "Block.h"
+#include "EntityPlayerSP.h"
+#include "InventoryPlayer.h"
+#include "Item.h"
+#include "ItemStack.h"
+#include "client/Minecraft.h"
 #include "GameSettings.h"
 #include "IBlockAccess.h"
 #include "platform/PlatformCompat.h"
@@ -134,6 +142,11 @@ bool Config::isSmoothInput()
 	return gameSettings != nullptr && gameSettings->ofSmoothInput;
 }
 
+int_t Config::getLightingUpdates()
+{
+	return gameSettings != nullptr ? gameSettings->ofLightingUpdates : 1;
+}
+
 bool Config::isBackgroundChunkLoading()
 {
 	return true;
@@ -246,7 +259,12 @@ bool Config::isTreesFancy()
 {
 	if (gameSettings->ofTrees == 0)
 		return gameSettings->fancyGraphics;
-	return gameSettings->ofTrees == 2;
+	return gameSettings->ofTrees >= 2;
+}
+
+bool Config::isTreesSmart()
+{
+	return gameSettings->ofTrees == 3;
 }
 
 bool Config::isGrassFancy()
@@ -484,6 +502,58 @@ bool Config::isSunMoonEnabled()
 bool Config::isDepthFog()
 {
 	return gameSettings == nullptr || gameSettings->ofDepthFog;
+}
+
+bool Config::isFastTerrain()
+{
+	return gameSettings == nullptr || gameSettings->ofFastTerrain;
+}
+
+bool Config::isTerrainShader()
+{
+	return gameSettings != nullptr && gameSettings->ofTerrainShader;
+}
+
+bool Config::isShaderEnhanced()
+{
+	return isTerrainShader() && gameSettings->ofShaderEnhanced;
+}
+
+int_t Config::getHeldLightLevel()
+{
+	// The held light lights the terrain through the terrain shader; the hand
+	// and nearby entities follow it so the three agree.
+	if (!isTerrainShader() || minecraft == nullptr || minecraft->thePlayer == nullptr ||
+		minecraft->thePlayer->inventory == nullptr)
+		return 0;
+	ItemStack *held = minecraft->thePlayer->inventory->getCurrentItem();
+	if (held == nullptr)
+		return 0;
+	if (held->itemID > 0 && held->itemID < 256)
+		return Block::lightValue[held->itemID];
+	if (Item::bucketLava != nullptr && held->itemID == Item::bucketLava->shiftedIndex)
+		return 15;
+	return 0;
+}
+
+int_t Config::applyHeldLight(int_t packedBrightness, double x, double y, double z)
+{
+	const int_t level = getHeldLightLevel();
+	if (level <= 0)
+		return packedBrightness;
+	EntityPlayer *player = minecraft->thePlayer;
+	const double dx = x - player->posX, dy = y - player->posY, dz = z - player->posZ;
+	const double distance = std::sqrt(dx * dx + dy * dy + dz * dz);
+	const int_t lit = static_cast<int_t>((static_cast<double>(level) - distance) * 16.0);
+	const int_t block = packedBrightness & 0xffff;
+	if (lit <= block)
+		return packedBrightness;
+	return (packedBrightness & ~0xffff) | std::min<int_t>(lit, 240);
+}
+
+bool Config::isEntityShader()
+{
+	return gameSettings == nullptr || gameSettings->ofEntityShader;
 }
 
 bool Config::isProfilerEnabled()

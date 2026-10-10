@@ -21,7 +21,9 @@ public:
 	static std::string getKeyDisplayString(int_t keyCode);
 	void setKeyBinding(int_t i, int_t j);
 	void resetControlBindingsToDefaults();
-	void setOptionFloatValue(const EnumOptions *enumoptions, float f);
+	// save=false while a slider is dragged: options.txt is read and rewritten
+	// on the memory card (~0.4 s on Vita); the slider saves on release.
+	void setOptionFloatValue(const EnumOptions *enumoptions, float f, bool save = true);
 	void setOptionFloatValue(const EnumOptions &enumoptions, float f) { setOptionFloatValue(&enumoptions, f); }
 	void setOptionValue(const EnumOptions *enumoptions, int_t i);
 	void setOptionValue(const EnumOptions &enumoptions, int_t i) { setOptionValue(&enumoptions, i); }
@@ -153,7 +155,7 @@ public:
 	float ofAoLevel;          // Smooth Lighting 0..1
 	int_t ofClouds;           // 0=Default,1=Fast,2=Fancy,3=OFF
 	float ofCloudsHeight;     // 0..1
-	int_t ofTrees;            // 0=Default,1=Fast,2=Fancy
+	int_t ofTrees;            // 0=Default,1=Fast,2=Fancy,3=Smart
 	int_t ofGrass;            // 0=Default,1=Fast,2=Fancy
 	int_t ofRain;             // 0=Default,1=Fast,2=Fancy,3=OFF
 	int_t ofWater;            // 0=Default,1=Fast,2=Fancy,3=OFF
@@ -165,11 +167,17 @@ public:
 	bool ofStars;
 	int_t ofChunkUpdates;     // 1..5
 	bool ofChunkUpdatesDynamic;
+	int_t ofLightingUpdates;  // 0=Smooth, 1=Fast, 2=Fastest (how much frame time a light backlog may use)
 	bool ofFarView;
 	int_t ofTime;             // 0=Default,1=Day,2=Night
 	bool ofClearWater;
 	bool ofSunMoon;
 	bool ofDepthFog;
+	bool showHeldItemName;    // item name above the hotbar for 2 s after switching (1.3+)
+	bool ofShaderEnhanced;    // Vita terrain shader: waving foliage and water on top of the held light
+	bool ofTerrainShader;     // Vita: terrain through the Cg program instead of vitaGL fixed function
+	bool ofEntityShader;      // Vita: entity models in one Cg draw per pass (VitaModelBatch)
+	bool ofFastTerrain;       // Vita: draw terrain sections from one VBO each in a batched loop
 	bool ofProfiler;
 	bool ofBetterSnow;
 	bool ofSwampColors;
@@ -184,6 +192,7 @@ public:
 	int_t ofAfLevel;           // 1,2,4,8,16, backend-clamped
 	bool ofCustomFonts;
 	int_t ofRenderDistanceFine;  // 32..512 blocks; consoles stay platform-clamped
+	int_t verticalSections;      // renderer layers kept around the player (Vita slider), 3..8
 	bool ofVoidParticles;
 	bool ofWaterParticles;
 	bool ofRainSplash;

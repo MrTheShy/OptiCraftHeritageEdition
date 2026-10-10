@@ -6,6 +6,7 @@
 #include "java/Math.h"
 #include "java/String.h"
 #include "platform/PlatformTuning.h"
+#include "platform/PlatformPerfOptions.h"
 #if PLATFORM_PC_LEGACY
 #include "pc/render/PcLegacyMeshScheduler.h"
 #endif
@@ -488,6 +489,9 @@ void RenderGlobal::loadRenderers()
 	const long long lrStartNs = System::nanoTime();
 	Block::leaves->setGraphicsLevel(Config::isTreesFancy());
 	renderDistance = mc->gameSettings->renderDistance;
+#if PLATFORM_TERRAIN_VBO_BATCH
+	fastTerrainBuilt = (Config::isFastTerrain() ? 1 : 0) | (Config::isTerrainShader() ? 2 : 0);
+#endif
 	worldRenderersToUpdate.clear();
 #if (PLATFORM_PS2 || PLATFORM_WII) && PLATFORM_CENTER_VERTICAL_RENDERERS
 	verticalWindowInitialized = false;
@@ -1266,6 +1270,12 @@ int_t RenderGlobal::sortAndRender(EntityLiving *entityliving, int_t i, double d)
 
 	if (mc->gameSettings->renderDistance != renderDistance && !Config::isLoadChunksFar())
 		loadRenderers();
+#if PLATFORM_TERRAIN_VBO_BATCH
+	// Sections pick their draw path when they are built, so a changed Fast
+	// Terrain option needs a full rebuild, like a render-distance change.
+	if (((Config::isFastTerrain() ? 1 : 0) | (Config::isTerrainShader() ? 2 : 0)) != fastTerrainBuilt)
+		loadRenderers();
+#endif
 
 	if (i == 0)
 	{
@@ -2901,6 +2911,33 @@ bool RenderGlobal::updateRenderers(EntityLiving *entityliving, bool flag)
 		}
 	}
 #endif
+#endif
+#if PLATFORM_PC_LEGACY
+	if (entityliving != nullptr)
+	{
+		WorldRenderer::pcLegacyViewerX = entityliving->posX;
+		WorldRenderer::pcLegacyViewerY = entityliving->posY;
+		WorldRenderer::pcLegacyViewerZ = entityliving->posZ;
+	}
+	// Trees: Smart. A section built with Fast leaves that the viewer came
+	// close to is rebuilt (Fancy). Checked every 8 frames.
+	static unsigned farLeavesFrame = 0;
+	if (worldRenderers != nullptr && (++farLeavesFrame & 7) == 0 && Config::isTreesSmart())
+	{
+		constexpr float nearSq = PC_LEGACY_NEAR_LEAVES_DISTANCE * PC_LEGACY_NEAR_LEAVES_DISTANCE;
+		const int_t total = renderChunksWide * renderChunksTall * renderChunksDeep;
+		for (int_t i = 0; i < total; ++i)
+		{
+			WorldRenderer *renderer = worldRenderers[i];
+			if (renderer != nullptr && renderer->pcLegacyBuiltFarLeaves && !renderer->needsUpdate &&
+			    renderer->pcLegacyViewerDistanceSq() < nearSq)
+			{
+				renderer->pcLegacyBuiltFarLeaves = false;
+				renderer->markDirtyFromLighting();
+				enqueueRendererUpdate(renderer);
+			}
+		}
+	}
 #endif
 	if (worldRenderersToUpdate.empty())
 		return true;

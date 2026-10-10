@@ -1,9 +1,11 @@
 #include "GuiSlider.h"
 
 #include <algorithm>
+#include <cstdint>
 #include "EnumOptions.h"
 #include "GameSettings.h"
 #include "Minecraft.h"
+#include "platform/PlatformCompat.h"
 #include "platform/RenderAPI.h"
 
 GuiSlider::GuiSlider(int_t id_, int_t x, int_t y, EnumOptions *option, const std::string &text, float_t value)
@@ -28,8 +30,18 @@ void GuiSlider::mouseDragged(Minecraft *mc, int_t mouseX, int_t mouseY)
 		sliderValue = (float_t)(mouseX - (xPosition + 4)) / (float_t)(width - 8);
 		if (sliderValue < 0.0f) sliderValue = 0.0f;
 		if (sliderValue > 1.0f) sliderValue = 1.0f;
-		mc->gameSettings->setOptionFloatValue(idFloat, sliderValue);
-		displayString = mc->gameSettings->getKeyBinding(idFloat);
+		// Called every frame of the drag: no save (options.txt on the memory
+		// card), and a distance change (a full renderer grid rebuild) at most
+		// every 300 ms; mouseReleased applies the final value and saves.
+		const bool heavy = idFloat == EnumOptions::RENDER_DISTANCE_FINE || idFloat == EnumOptions::VERTICAL_DISTANCE;
+		const std::uint64_t nowUs = PlatformCompat::getMonotonicMicros();
+		if (!heavy || nowUs - heavyAppliedUs >= 300000)
+		{
+			if (heavy)
+				heavyAppliedUs = nowUs;
+			mc->gameSettings->setOptionFloatValue(idFloat, sliderValue, false);
+			displayString = mc->gameSettings->getKeyBinding(idFloat);
+		}
 	}
 	renderColor4f(1.0f, 1.0f, 1.0f, 1.0f);
 	drawTexturedModalRect(xPosition + (int_t)(sliderValue * (float_t)(width - 8)),     yPosition, 0,   66, 4, 20);
@@ -43,9 +55,10 @@ bool GuiSlider::mousePressed(Minecraft *mc, int_t mouseX, int_t mouseY)
 		sliderValue = (float_t)(mouseX - (xPosition + 4)) / (float_t)(width - 8);
 		if (sliderValue < 0.0f) sliderValue = 0.0f;
 		if (sliderValue > 1.0f) sliderValue = 1.0f;
-		mc->gameSettings->setOptionFloatValue(idFloat, sliderValue);
+		mc->gameSettings->setOptionFloatValue(idFloat, sliderValue, false);
 		displayString = mc->gameSettings->getKeyBinding(idFloat);
 		dragging = true;
+		heldMc = mc;
 		return true;
 	}
 	return false;
@@ -53,6 +66,11 @@ bool GuiSlider::mousePressed(Minecraft *mc, int_t mouseX, int_t mouseY)
 
 void GuiSlider::mouseReleased(int_t mouseX, int_t mouseY)
 {
+	if (dragging && heldMc != nullptr)
+	{
+		heldMc->gameSettings->setOptionFloatValue(idFloat, sliderValue);
+		displayString = heldMc->gameSettings->getKeyBinding(idFloat);
+	}
 	dragging = false;
 }
 

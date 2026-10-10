@@ -9,9 +9,13 @@
 #include "LegacyLanguageOptions.h"
 #include "LegacyMainMenuLayout.h"
 #include "LegacyVideoOptions.h"
+#include "LegacyPerformanceOptions.h"
 #include "LegacyViewOptions.h"
 #include "net/minecraft/src/GameSettings.h"
 #include "net/minecraft/src/Minecraft.h"
+
+#include <string>
+#include <vector>
 
 namespace
 {
@@ -22,6 +26,7 @@ enum LegacyHelpButtonId
     BUTTON_LANGUAGE = 102,
     BUTTON_HERITAGE = 103,
     BUTTON_VIEW = 104,
+    BUTTON_PERFORMANCE = 105,
     BUTTON_BACK = 200
 };
 }
@@ -34,27 +39,33 @@ LegacyHelpOptions::LegacyHelpOptions(GuiScreen *parent, GameSettings *settingsVa
 
 void LegacyHelpOptions::initGui()
 {
-    configureLegacyLayout(6, false);
-    const LegacyMainMenuLayout layout = legacyMainMenuLayout(width, height, 6);
-    const int_t stride = layout.buttonHeight + layout.buttonSpacing;
-    const std::string labels[] = {
+    std::vector<std::string> labels = {
         uiText("Video"),
         uiText("Controls"),
         uiText("Language"),
         uiText("OptiCraft Options"),
-        uiText("View"),
-        uiText("Back")
+        uiText("View")
     };
-    const int_t ids[] = {
+    std::vector<int_t> ids = {
         BUTTON_VIDEO,
         BUTTON_CONTROLS,
         BUTTON_LANGUAGE,
         BUTTON_HERITAGE,
-        BUTTON_VIEW,
-        BUTTON_BACK
+        BUTTON_VIEW
     };
+#if PLATFORM_PC_LEGACY
+    labels.push_back(uiText("Performance"));
+    ids.push_back(BUTTON_PERFORMANCE);
+#endif
+    labels.push_back(uiText("Back"));
+    ids.push_back(BUTTON_BACK);
 
-    for (int_t i = 0; i < 6; ++i)
+    const int_t count = (int_t)ids.size();
+    configureLegacyLayout(count, false);
+    const LegacyMainMenuLayout layout = legacyMainMenuLayout(width, height, count);
+    const int_t stride = layout.buttonHeight + layout.buttonSpacing;
+
+    for (int_t i = 0; i < count; ++i)
     {
         controlList.push_back(new LegacyGuiButton(ids[i], layout.buttonX,
             layout.firstButtonY + i * stride, layout.buttonWidth, layout.buttonHeight, labels[i]));
@@ -87,6 +98,9 @@ void LegacyHelpOptions::actionPerformed(GuiButton *button)
         return;
     case BUTTON_VIEW:
         mc->displayGuiScreen(new LegacyViewOptions(this, settings, backgroundMode));
+        return;
+    case BUTTON_PERFORMANCE:
+        mc->displayGuiScreen(new LegacyPerformanceOptions(this, settings, backgroundMode));
         return;
     case BUTTON_BACK:
         returnToParent();

@@ -77,6 +77,7 @@
 #include <cmath>
 #include "platform/ConsoleAspectRatio.h"
 #include "platform/PlatformTuning.h"
+#include "platform/PlatformPerfOptions.h"
 #if PLATFORM_PC_LEGACY
 #include "pc/render/PcLegacyLightmapCache.h"
 #endif
@@ -1062,7 +1063,8 @@ void EntityRenderer::setupCameraTransform(float partialTicks, int anaglyphPass)
         renderTranslate((float)(anaglyphPass * 2 - 1) * 0.1f, 0.0f, 0.0f);
     }
     
-#if !PLATFORM_SKIP_CAMERA_FX
+    if (!platformPerf().skipCameraFx)
+    {
     hurtCameraEffect(partialTicks);
     
     if (mc->gameSettings->viewBobbing)
@@ -1084,7 +1086,7 @@ void EntityRenderer::setupCameraTransform(float partialTicks, int anaglyphPass)
         renderScale(1.0f / portalScale, 1.0f, 1.0f);
         renderRotate(-((float)rendererUpdateCount + partialTicks) * portalRotationSpeed, 0.0f, 1.0f, 1.0f);
     }
-#endif
+    }
     
     orientCamera(partialTicks);
 
@@ -1863,25 +1865,30 @@ void EntityRenderer::renderWorld(float partialTicks, int64_t renderTimeLimitNano
 #endif
         
         // Efectos (particulas de destruccion de bloques, etc.)
-#if !PLATFORM_SKIP_WORLD_PARTICLES
+        const bool drawParticles = !platformPerf().skipWorldParticles;
 #if PLATFORM_PS2 && MC_LOG_LEVEL > 2
         const PlatformDrawSnapshot particlesDrawStart = platformProfileDrawSnapshot();
 #endif
-        enableLightmap(partialTicks);
-        effectrenderer->renderLitParticles(entityliving, partialTicks);
-#endif
+        if (drawParticles)
+        {
+            PlatformTickPhaseScope particlePhase("rParticles");
+            enableLightmap(partialTicks);
+            effectrenderer->renderLitParticles(entityliving, partialTicks);
+        }
         
         RenderHelper::disableStandardItemLighting();
         
         setupFog(0, partialTicks);
         
         // Particulas
-#if !PLATFORM_SKIP_WORLD_PARTICLES
-        effectrenderer->renderParticles(entityliving, partialTicks);
-        disableLightmap(partialTicks);
+        if (drawParticles)
+        {
+            PlatformTickPhaseScope particlePhase("rParticles");
+            effectrenderer->renderParticles(entityliving, partialTicks);
+            disableLightmap(partialTicks);
+        }
 #if PLATFORM_PS2 && MC_LOG_LEVEL > 2
         platformProfileDrawCategory(PlatformDrawCategory::Particles, particlesDrawStart);
-#endif
 #endif
         
         // Seleccion de bloque bajo agua
@@ -2088,14 +2095,16 @@ void EntityRenderer::renderWorld(float partialTicks, int64_t renderTimeLimitNano
 #endif
         
         // Lluvia y nieve
-#if !PLATFORM_SKIP_RAIN_SNOW
 #if PLATFORM_PS2 && MC_LOG_LEVEL > 2
         const PlatformDrawSnapshot weatherDrawStart = platformProfileDrawSnapshot();
 #endif
-        renderRainSnow(partialTicks);
+        if (!platformPerf().skipRainSnow)
+        {
+            PlatformTickPhaseScope weatherPhase("rWeather");
+            renderRainSnow(partialTicks);
+        }
 #if PLATFORM_PS2 && MC_LOG_LEVEL > 2
         platformProfileDrawCategory(PlatformDrawCategory::Weather, weatherDrawStart);
-#endif
 #endif
         
         // Niebla para nubes
@@ -2910,7 +2919,11 @@ void EntityRenderer::setupFog(int fogMode, float partialTicks)
             fogEnd = std::min(effectiveFar, 192.0f) * 0.5f;
         }
 
+#ifdef VITA_PLATFORM
+        if (Config::isFogOff() && fogMode >= 0) // Vita: Fog OFF clears the Nether fog too
+#else
         if (Config::isFogOff() && fogMode >= 0 && !mc->theWorld->worldProvider->isNether)
+#endif
         {
             fogStart = effectiveFar * 4.0f;
             fogEnd = effectiveFar * 8.0f;

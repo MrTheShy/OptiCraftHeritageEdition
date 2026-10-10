@@ -75,8 +75,12 @@ void RenderList::render()
     // Batch first: it sets client state once and leaves it as a list draw would.
     // The lists below enable and disable their own arrays, so they must not run
     // inside it.
+    // Kept until the next setup/reset, like the list ids: Fancy water draws
+    // pass 1 twice (depth only, then colour through renderAllRenderLists), and
+    // clearing here left the colour draw empty: invisible water.
     if (!batchDraws.empty())
     {
+        vitaTerrainSetViewer(viewerX, viewerY, viewerZ);
         vitaTerrainDrawBatch(batchDraws.data(), batchDraws.size(), batchPass);
     }
 #endif
@@ -96,4 +100,7 @@ void RenderList::reset()
 {
     initialized = false;
     displayListIds.clear();
+#if PLATFORM_TERRAIN_VBO_BATCH
+    batchDraws.clear();
+#endif
 }
