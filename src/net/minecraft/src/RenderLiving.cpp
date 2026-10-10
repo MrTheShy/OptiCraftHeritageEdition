@@ -7,6 +7,7 @@
 #include "Tessellator.h"
 #include "FontRenderer.h"
 #include "platform/PlatformConfig.h"
+#include "platform/Profiler.h"
 #if PLATFORM_OPTIFINE_RANDOM_MOBS
 #include "RandomMobs.h"
 #endif
@@ -102,8 +103,12 @@ void RenderLiving::doRenderLiving(EntityLiving* entityliving, double d, double d
         }
 
         renderEnable(RenderCapability::AlphaTest);
+        {
+        PlatformTickPhaseScope phase("lvModel");
         mainModel->setLivingAnimations(entityliving, limbSwing, limbAmount, f1);
         renderModel(entityliving, limbSwing, limbAmount, age, headYaw - bodyYaw, pitch, scale);
+        }
+        PlatformTickPhaseScope passesPhase("lvPasses");
 
         for (int pass = 0; pass < 4; ++pass) {
             int passResult = shouldRenderPass(entityliving, pass, f1);
@@ -153,7 +158,10 @@ void RenderLiving::doRenderLiving(EntityLiving* entityliving, double d, double d
             }
         }
 
+        {
+        PlatformTickPhaseScope phase("lvEquip");
         renderEquippedItems(entityliving, f1);
+        }
         float brightness = entityliving->getEntityBrightness(f1);
         int colorMultiplier = getColorMultiplier(entityliving, brightness, f1);
 
@@ -212,8 +220,11 @@ void RenderLiving::doRenderLiving(EntityLiving* entityliving, double d, double d
     renderEnable(RenderCapability::CullFace);
     renderPopMatrix();
     resetLivingRenderGLState();
+    {
+    PlatformTickPhaseScope phase("lvSpecial");
     passSpecialRender(entityliving, d, d1, d2);
     resetLivingRenderGLState();
+    }
 }
 
 void RenderLiving::translateEntity(EntityLiving* entityliving, double d, double d1, double d2) {

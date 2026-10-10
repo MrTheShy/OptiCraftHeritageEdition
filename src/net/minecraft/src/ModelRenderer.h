@@ -31,6 +31,7 @@ public:
     void renderWithRotation(float f);
     void postRender(float f);
     void ensureCompiled(float scale);
+    const std::vector<ModelBox*>& boxes() const { return cubeList; }
 
 private:
     void init(ModelBase* baseModel, const std::string& boxName, int_t textureX, int_t textureY);
@@ -64,4 +65,9 @@ public:
     bool mirror;
     bool showModel;
     bool field_1402_i;
+#if PLATFORM_MODEL_GPU_BATCH
+    // Owned by platform/RenderModelBatch: the VBO this part lives in, and where.
+    void* gpuLayout = nullptr;
+    int gpuSlot = -1;
+#endif
 };

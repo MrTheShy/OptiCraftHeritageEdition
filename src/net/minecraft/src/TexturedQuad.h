@@ -21,6 +21,8 @@ public:
 	// batch (caller does startDrawingQuads/draw). Lets a whole box's 6 faces
 	// share one draw call instead of 6 separate glDrawArrays kicks.
 	void emitInto(Tessellator *tessellator, float f);
+	// The normal emitInto passes to the Tessellator (invertNormal applied).
+	void faceNormal(float &x, float &y, float &z);
 
 	PositionTextureVertex **vertexPositions;
 	int_t nVertices;

@@ -69,7 +69,7 @@ void TexturedQuad::flipFace()
 	delete[] oldVertexPositions;
 }
 
-void TexturedQuad::emitInto(Tessellator *tessellator, float f)
+void TexturedQuad::faceNormal(float &x, float &y, float &z)
 {
 	if (!normalComputed)
 	{
@@ -84,14 +84,17 @@ void TexturedQuad::emitInto(Tessellator *tessellator, float f)
 		normalComputed = true;
 	}
 
-	if (invertNormal)
-	{
-		tessellator->setNormal(-normalX, -normalY, -normalZ);
-	}
-	else
-	{
-		tessellator->setNormal(normalX, normalY, normalZ);
-	}
+	const float sign = invertNormal ? -1.0f : 1.0f;
+	x = sign * normalX;
+	y = sign * normalY;
+	z = sign * normalZ;
+}
+
+void TexturedQuad::emitInto(Tessellator *tessellator, float f)
+{
+	float nx, ny, nz;
+	faceNormal(nx, ny, nz);
+	tessellator->setNormal(nx, ny, nz);
 	for (int_t i = 0; i < 4; i++)
 	{
 		PositionTextureVertex *positiontexturevertex = vertexPositions[i];

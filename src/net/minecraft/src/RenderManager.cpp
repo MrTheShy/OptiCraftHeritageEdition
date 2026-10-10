@@ -1,5 +1,6 @@
 #include "RenderManager.h"
 #include "Render.h"
+#include "platform/RenderModelBatch.h"
 #include "World.h"
 #include "Block.h"
 #include "FontRenderer.h"
@@ -401,6 +402,8 @@ void RenderManager::renderEntity(Entity* entity, float f) {
 void RenderManager::renderEntityWithPosYaw(Entity* entity, double d, double d1, double d2, float f, float f1) {
     Render* render = getEntityRenderObject(entity);
     if (render != nullptr) {
+        // Every model part this renderer draws shares one VBO and one draw per pass.
+        RenderModelBatchScope modelBatch(render);
         render->doRender(entity, d, d1, d2, f, f1);
         render->doRenderShadowAndFire(entity, d, d1, d2, f, f1);
     }

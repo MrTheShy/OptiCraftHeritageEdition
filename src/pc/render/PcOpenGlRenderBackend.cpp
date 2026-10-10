@@ -53,9 +53,16 @@ bool renderCaptureInterleaved(const RenderInterleavedMesh& mesh, RenderCapturedM
 bool renderDrawCaptured(const RenderCapturedMesh& mesh);
 }
 
-#define VITA_RECORD(call) if (vitaRecord([=] { call; })) return
+// Test before building the closure: a std::function with a capture over 8
+// bytes heap-allocates, and most calls happen outside any recording.
+// Matrix calls leave pending model parts alone (each part took its modelview
+// when submitted); every other call draws them first (VitaModelBatch).
+#define VITA_RECORD_MATRIX(call) if (g_vitaRecording > 0) { vitaRecord([=] { call; }); return; } else (void)0
+#define VITA_RECORD(call) VITA_MODEL_FLUSH(); VITA_RECORD_MATRIX(call)
 #else
 #define VITA_RECORD(call)
+#define VITA_RECORD_MATRIX(call)
+#define VITA_PERF_COUNT(counter, n) ((void)0)
 #endif
 
 
@@ -624,6 +631,7 @@ void renderFogi(RenderFogParameter parameter, RenderFogMode value)
 void renderFogColor(const float* values)
 {
 #ifdef VITA_PLATFORM
+    VITA_MODEL_FLUSH();
     if (g_vitaRecording > 0)
     {
         const float v0 = values[0], v1 = values[1], v2 = values[2], v3 = values[3];
@@ -640,6 +648,7 @@ void renderFogColor(const float* values)
 void renderLightfv(int lightIndex, RenderLightParameter parameter, const float* values)
 {
 #ifdef VITA_PLATFORM
+    VITA_MODEL_FLUSH();
     if (g_vitaRecording > 0)
     {
         const float v0 = values[0], v1 = values[1], v2 = values[2], v3 = values[3];
@@ -655,18 +664,25 @@ void renderLightfv(int lightIndex, RenderLightParameter parameter, const float* 
         case RenderLightParameter::Specular: glParameter = GL_SPECULAR; break;
         case RenderLightParameter::Position: glParameter = GL_POSITION; break;
     }
+#if PLATFORM_MODEL_GPU_BATCH
+    vitaModelTrackLight(lightIndex, parameter, values);
+#endif
     glLightfv(GL_LIGHT0 + lightIndex, glParameter, values);
 }
 
 void renderLightModelAmbient(const float* values)
 {
 #ifdef VITA_PLATFORM
+    VITA_MODEL_FLUSH();
     if (g_vitaRecording > 0)
     {
         const float v0 = values[0], v1 = values[1], v2 = values[2], v3 = values[3];
         vitaRecord([=] { const float copy[4] = {v0, v1, v2, v3}; PcOpenGlRenderBackend::renderLightModelAmbient(copy); });
         return;
     }
+#endif
+#if PLATFORM_MODEL_GPU_BATCH
+    vitaModelTrackLightModelAmbient(values);
 #endif
     glLightModelfv(GL_LIGHT_MODEL_AMBIENT, values);
 }
@@ -687,6 +703,7 @@ void renderShadeModel(RenderShadeModel model)
 
 void renderClear(unsigned int mask)
 {
+    VITA_MODEL_FLUSH();
     glClear(static_cast<GLbitfield>(mask));
 }
 
@@ -788,55 +805,55 @@ void renderMatrixMode(RenderMatrixMode mode)
 
 void renderLoadIdentity()
 {
-    VITA_RECORD(PcOpenGlRenderBackend::renderLoadIdentity());
+    VITA_RECORD_MATRIX(PcOpenGlRenderBackend::renderLoadIdentity());
     glLoadIdentity();
 }
 
 void renderPushMatrix()
 {
-    VITA_RECORD(PcOpenGlRenderBackend::renderPushMatrix());
+    VITA_RECORD_MATRIX(PcOpenGlRenderBackend::renderPushMatrix());
     glPushMatrix();
 }
 
 void renderPopMatrix()
 {
-    VITA_RECORD(PcOpenGlRenderBackend::renderPopMatrix());
+    VITA_RECORD_MATRIX(PcOpenGlRenderBackend::renderPopMatrix());
     glPopMatrix();
 }
 
 void renderTranslate(float x, float y, float z)
 {
-    VITA_RECORD(PcOpenGlRenderBackend::renderTranslate(x, y, z));
+    VITA_RECORD_MATRIX(PcOpenGlRenderBackend::renderTranslate(x, y, z));
     glTranslatef(x, y, z);
 }
 
 void renderRotate(float angle, float x, float y, float z)
 {
-    VITA_RECORD(PcOpenGlRenderBackend::renderRotate(angle, x, y, z));
+    VITA_RECORD_MATRIX(PcOpenGlRenderBackend::renderRotate(angle, x, y, z));
     glRotatef(angle, x, y, z);
 }
 
 void renderScale(float x, float y, float z)
 {
-    VITA_RECORD(PcOpenGlRenderBackend::renderScale(x, y, z));
+    VITA_RECORD_MATRIX(PcOpenGlRenderBackend::renderScale(x, y, z));
     glScalef(x, y, z);
 }
 
 void renderScaleDouble(double x, double y, double z)
 {
-    VITA_RECORD(PcOpenGlRenderBackend::renderScaleDouble(x, y, z));
+    VITA_RECORD_MATRIX(PcOpenGlRenderBackend::renderScaleDouble(x, y, z));
     glScaled(x, y, z);
 }
 
 void renderFrustum(double left, double right, double bottom, double top, double nearValue, double farValue)
 {
-    VITA_RECORD(PcOpenGlRenderBackend::renderFrustum(left, right, bottom, top, nearValue, farValue));
+    VITA_RECORD_MATRIX(PcOpenGlRenderBackend::renderFrustum(left, right, bottom, top, nearValue, farValue));
     glFrustum(left, right, bottom, top, nearValue, farValue);
 }
 
 void renderOrtho(double left, double right, double bottom, double top, double nearValue, double farValue)
 {
-    VITA_RECORD(PcOpenGlRenderBackend::renderOrtho(left, right, bottom, top, nearValue, farValue));
+    VITA_RECORD_MATRIX(PcOpenGlRenderBackend::renderOrtho(left, right, bottom, top, nearValue, farValue));
     glOrtho(left, right, bottom, top, nearValue, farValue);
 }
 
@@ -935,6 +952,7 @@ void renderGenerateOcclusionQueries(int count, int* queries)
 
 void renderBeginOcclusionQuery(int query)
 {
+    VITA_MODEL_FLUSH();
     glBeginQueryARB(GL_SAMPLES_PASSED_ARB, static_cast<GLuint>(query));
 }
 
@@ -960,6 +978,7 @@ unsigned int renderOcclusionQueryResult(int query)
 bool renderReadPixelsRgb(int x, int y, int width, int height, void* pixels)
 {
     if (pixels == nullptr || width <= 0 || height <= 0) return false;
+    VITA_MODEL_FLUSH();
     glPixelStorei(GL_PACK_ALIGNMENT, 1);
     glReadPixels(x, y, width, height, GL_RGB, GL_UNSIGNED_BYTE, pixels);
     return true;
@@ -973,6 +992,7 @@ void renderSetLegacyPresentationGamma(bool)
 bool renderCopyFramebufferToBoundTexture(int x, int y, int width, int height)
 {
     if (width <= 0 || height <= 0) return false;
+    VITA_MODEL_FLUSH();
     glCopyTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, x, y, width, height);
     return glGetError() == GL_NO_ERROR;
 }
@@ -1059,6 +1079,9 @@ static void vitaDrawBufferedMesh(const VitaBufferedMesh& buffered)
     glEnableClientState(GL_VERTEX_ARRAY);
     VITA_PERF_COUNT(g_vitaPerfDraws, 1);
     glDrawArrays(static_cast<GLenum>(renderPrimitiveValue(mesh.primitive)), 0, mesh.count);
+    // Unbind first: every pointer reset below must capture no buffer, or it
+    // keeps naming this VBO (the TEX1 reset in vitaUnbindConstantLightmap did).
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
     glDisableClientState(GL_VERTEX_ARRAY);
     if (constantLightmap)
         vitaUnbindConstantLightmap();
@@ -1075,7 +1098,6 @@ static void vitaDrawBufferedMesh(const VitaBufferedMesh& buffered)
         glDisableClientState(GL_COLOR_ARRAY);
     if (mesh.hasNormals)
         glDisableClientState(GL_NORMAL_ARRAY);
-    glBindBuffer(GL_ARRAY_BUFFER, 0);
 
     // Not redundant: with lighting on, vitaGL feeds the material from the
     // colour/normal pointers it last saw, so a stale VBO pointer recolours
@@ -1100,6 +1122,7 @@ bool renderDrawInterleaved(const RenderInterleavedMesh& mesh)
 {
     if (mesh.data == nullptr || mesh.stride <= 0 || mesh.count <= 0)
         return false;
+    VITA_MODEL_FLUSH();
 #ifdef VITA_PLATFORM
     if (g_vitaRecording > 0)
     {
@@ -1238,4 +1261,8 @@ bool renderDrawCaptured(const RenderCapturedMesh& mesh)
 
 #ifdef VITA_PLATFORM
 const VitaFixedState &vitaFixedState() { return PcOpenGlRenderBackend::fixedState(); }
+#endif
+#if PLATFORM_MODEL_GPU_BATCH
+bool vitaDisplayListRecording() { return PcOpenGlRenderBackend::vitaDisplayListRecordingImpl(); }
+void vitaLightmapCoord(float out[2]) { PcOpenGlRenderBackend::vitaLightmapCoordImpl(out); }
 #endif

@@ -9,6 +9,7 @@
 #include "TexturedQuad.h"
 #include "TextureOffset.h"
 #include "platform/RenderAPI.h"
+#include "platform/RenderModelBatch.h"
 
 #include <algorithm>
 
@@ -86,6 +87,7 @@ ModelRenderer::~ModelRenderer()
 
 void ModelRenderer::invalidateCompiledGeometry()
 {
+    renderModelBatchForget(this);
     if (displayList != 0)
     {
 #if PLATFORM_MODEL_PERSISTENT_MESH
@@ -158,6 +160,8 @@ void ModelRenderer::setRotationPoint(float x, float y, float z)
 
 void ModelRenderer::drawGeometry(float scale)
 {
+    if (renderModelBatchPart(this, scale))
+        return;
 #if PLATFORM_MODEL_PERSISTENT_MESH
     // Compiled geometry has the scale it was recorded with baked into its vertex
     // positions, and a ModelRenderer part is shared by every instance of its
@@ -304,11 +308,23 @@ void ModelRenderer::compileDisplayList(float scale)
         displayList = GLAllocation::generateDisplayLists(1);
         renderBeginDisplayList(displayList);
         Tessellator* tessellator = &Tessellator::instance;
+#ifdef VITA_PLATFORM
+        // One draw for the whole part, as the persistent-mesh path does: the
+        // per-quad draws cost 6 vitaGL draw calls per box on every replay.
+        tessellator->startDrawingQuads();
+        for (ModelBox* box : cubeList)
+        {
+            if (box != nullptr)
+                box->emitInto(tessellator, scale);
+        }
+        tessellator->draw();
+#else
         for (ModelBox* box : cubeList)
         {
             if (box != nullptr)
                 box->render(tessellator, scale);
         }
+#endif
         renderEndDisplayList();
     }
     compiled = true;

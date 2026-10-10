@@ -168,6 +168,28 @@
 #  endif
 #endif
 
+// Entity and tile-entity models: every ModelRenderer part drawn while one
+// entity renders goes into one static VBO per renderer, drawn by a Cg program
+// with per-part matrices (pc/render/VitaModelBatch) -- one draw per model pass
+// instead of a replayed display list per part. "Entity Shader" turns it off at
+// runtime. Adds fields to ModelRenderer, so it lives here.
+#ifndef PLATFORM_MODEL_GPU_BATCH
+#  ifdef VITA_PLATFORM
+#    define PLATFORM_MODEL_GPU_BATCH 1
+#  else
+#    define PLATFORM_MODEL_GPU_BATCH 0
+#  endif
+#endif
+
+// Held 2D items (ItemRenderer::renderItemIn2D: 264 vertices per icon) are
+// recorded once per icon into a display list and replayed. Needs display lists
+// that replay a Tessellator draw as a VBO.
+#ifndef PLATFORM_ITEM_2D_LISTS
+#  ifdef VITA_PLATFORM
+#    define PLATFORM_ITEM_2D_LISTS 1
+#  else
+#    define PLATFORM_ITEM_2D_LISTS 0
+#  endif
 #endif
 
 #ifndef PLATFORM_NATIVE_TERRAIN_PIPELINE

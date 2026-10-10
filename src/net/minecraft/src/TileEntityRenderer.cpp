@@ -1,6 +1,7 @@
 #include "TileEntityRenderer.h"
 
 #include "platform/RenderAPI.h"
+#include "platform/RenderModelBatch.h"
 #include "TileEntity.h"
 #include "TileEntitySpecialRenderer.h"
 #include "TileEntitySign.h"
@@ -152,7 +153,10 @@ void TileEntityRenderer::renderTileEntityAt(TileEntity *tileentity, double d, do
         {
             auto *renderer = dynamic_cast<TileEntityChestRenderer *>(getSpecialRendererForEntity(tileentity));
             if (renderer != nullptr)
+            {
+                RenderModelBatchScope modelBatch(renderer);
                 (void)renderer->renderDynamicPart(chest, d, d1, d2, f);
+            }
             return;
         }
         if (auto *sign = dynamic_cast<TileEntitySign *>(tileentity))
@@ -167,7 +171,10 @@ void TileEntityRenderer::renderTileEntityAt(TileEntity *tileentity, double d, do
 
     TileEntitySpecialRenderer *renderer = getSpecialRendererForEntity(tileentity);
     if (renderer != nullptr)
+    {
+        RenderModelBatchScope modelBatch(renderer);
         renderer->renderTileEntityAt(tileentity, d, d1, d2, f);
+    }
 }
 
 bool TileEntityRenderer::canRenderStaticPart(TileEntity *tileentity)
