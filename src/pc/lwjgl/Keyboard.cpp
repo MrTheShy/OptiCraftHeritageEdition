@@ -8,6 +8,8 @@
 #include "lwjgl/VitaPad.h"
 
 #include "SDL_events.h"
+#include "SDL_keyboard.h"
+#include "lwjgl/GLContext.h"
 
 namespace lwjgl
 {
@@ -349,6 +351,13 @@ void pushEvent(const SDL_Event &e)
 	if (e.type == SDL_KEYDOWN || e.type == SDL_KEYUP)
 	{
 		handleKey(keySDLToLWJGL(e.key.keysym.sym), e.key.repeat, e.key.state == SDL_PRESSED);
+#ifdef VITA_PLATFORM
+		// The Vita IME sends space as a SPACE key press, never as text
+		// (SDL_vitavideo.c, SCE_IME_EVENT_UPDATE_TEXT), so text fields saw no
+		// character for it. Give the key its character while typing.
+		if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_SPACE && SDL_IsTextInputActive())
+			handleCharacter(' ');
+#endif
 	}
 	else
 	{
@@ -411,6 +420,28 @@ void clearEvents()
 void enableRepeatEvents(bool repeat)
 {
 	allow_repeat_events = repeat;
+}
+
+void showScreenKeyboard()
+{
+#ifdef VITA_PLATFORM
+	SDL_Window *window = GLContext::detail::getWindow();
+	if (window != nullptr && !SDL_IsScreenKeyboardShown(window))
+		SDL_StartTextInput();
+#endif
+}
+
+int screenKeyboardHeightPixels()
+{
+#ifdef VITA_PLATFORM
+	// The Vita IME panel (sceIme, opened by SDL_StartTextInput) with its
+	// candidate bar; the system does not report its height, measured on a Vita 1000.
+	constexpr int kVitaImePanelPixels = 260;
+	SDL_Window *window = GLContext::detail::getWindow();
+	if (window != nullptr && SDL_IsScreenKeyboardShown(window))
+		return kVitaImePanelPixels;
+#endif
+	return 0;
 }
 
 bool areRepeatEventsEnabled()

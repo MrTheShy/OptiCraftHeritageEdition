@@ -74,6 +74,7 @@ bool g_initialized = false;
 bool g_grabbed = false;
 bool g_previous[InputCount] = {};
 Action g_active[InputCount] = {};
+bool g_selectCombo = false; // another button went down while SELECT was held
 float g_lookRemainderX = 0.0f;
 float g_lookRemainderY = 0.0f;
 SceUInt64 g_lastPollTime = 0;
@@ -129,7 +130,8 @@ Action actionFor(int input, bool inGame, bool pointerMode)
 			case InputLTrigger: return mouseButton(SDL_BUTTON_RIGHT);
 			case InputRTrigger: return mouseButton(SDL_BUTTON_LEFT);
 			case InputStart: return key(SDLK_ESCAPE);
-			case InputSelect: return key(SDLK_F3);
+			// Chat (T): servers need it for /register and /login. F3 is SELECT + RIGHT (poll).
+			case InputSelect: return key(SDLK_t);
 			case InputUp: return key(SDLK_F5);
 			case InputLeft: return wheel(1);
 			case InputRight: return wheel(-1);
@@ -144,6 +146,8 @@ Action actionFor(int input, bool inGame, bool pointerMode)
 		case InputCircle: return key(SDLK_ESCAPE);
 		case InputTriangle: return key(SDLK_e);
 		case InputStart: return key(SDLK_ESCAPE);
+		// Sends the chat line (and confirms any text field) after the keyboard.
+		case InputSelect: return key(SDLK_RETURN);
 		case InputLTrigger: return key(SDLK_PAGEUP);
 		case InputRTrigger: return key(SDLK_PAGEDOWN);
 		case InputUp: return key(SDLK_UP);
@@ -401,8 +405,44 @@ void poll()
 
 	pollTouch();
 
+	// SELECT acts on release, and only when no other button was pressed while
+	// it was held: SELECT + button combos belong to system plugins (PSVshell
+	// opens its overclock menu with SELECT + UP) and must not reach the game.
+	// The one game combo is SELECT + RIGHT in game: the F3 debug screen.
+	if (pressed[InputSelect])
+	{
+		if (!g_previous[InputSelect])
+			g_selectCombo = false;
+		for (int i = 0; i < InputCount; ++i)
+		{
+			if (i != InputSelect && pressed[i] && !g_previous[i])
+			{
+				g_selectCombo = true;
+				if (i == InputRight && g_grabbed)
+				{
+					const Action debugScreen = key(SDLK_F3);
+					begin(debugScreen);
+					end(debugScreen);
+				}
+			}
+		}
+	}
+	else if (g_previous[InputSelect] && !g_selectCombo)
+	{
+		const Action tap = actionFor(InputSelect, g_grabbed, g_pointerMode);
+		begin(tap);
+		end(tap);
+	}
+
 	for (int i = 0; i < InputCount; ++i)
 	{
+		// SELECT itself is handled above; presses made while it is held are
+		// swallowed (no begin, so their release ends nothing).
+		if (i == InputSelect || (pressed[InputSelect] && pressed[i] && !g_previous[i]))
+		{
+			g_previous[i] = pressed[i];
+			continue;
+		}
 		if (i == InputDown && g_grabbed && g_active[i].type == ActionType::None)
 		{
 			if (pressed[i] && !g_previous[i])

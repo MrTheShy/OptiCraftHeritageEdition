@@ -10,6 +10,8 @@ class GuiTextField;
 class GuiChat : public GuiScreen
 {
 public:
+	// GUI units the chat moves up so the on-screen keyboard does not cover it.
+	static int_t keyboardInset(Minecraft *mc, int_t guiHeight);
 	GuiChat();
 	explicit GuiChat(const std::string &initialMessage);
 	~GuiChat() override;

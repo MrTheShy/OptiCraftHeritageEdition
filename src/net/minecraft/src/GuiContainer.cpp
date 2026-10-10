@@ -392,9 +392,57 @@ void GuiContainer::mouseClicked(int_t x, int_t y, int_t button)
 		if (slotId != -1)
 		{
 			bool shift = slotId != -999 && (lwjgl::Keyboard::isKeyDown(42) || lwjgl::Keyboard::isKeyDown(54));
+			EntityPlayer *p = getContainerPlayer();
+			ItemStack *held = (p ? p : mc->thePlayer)->inventory->getItemStack();
+			if (!shift && slot != nullptr && canDragInto(slot, held))
+			{
+				// Held until release: the click happens then, or the split.
+				dragActive = true;
+				dragButton = button;
+				dragSlots.assign(1, slot);
+				return;
+			}
 			handleMouseClick(slot, slotId, button, shift);
 		}
 	}
+}
+
+bool GuiContainer::canDragInto(Slot *slot, ItemStack *held)
+{
+	if (slot == nullptr || held == nullptr || !held->isStackable() || !slot->isItemValid(held))
+		return false;
+	ItemStack *present = slot->getStack();
+	return present == nullptr || present->isItemEqual(held);
+}
+
+void GuiContainer::finishDrag()
+{
+	dragActive = false;
+	std::vector<Slot *> slots;
+	slots.swap(dragSlots);
+	if (slots.empty())
+		return;
+	if (slots.size() == 1)
+	{
+		handleMouseClick(slots[0], slots[0]->slotNumber, dragButton, false);
+		return;
+	}
+	EntityPlayer *p = getContainerPlayer();
+	ItemStack *held = (p ? p : mc->thePlayer)->inventory->getItemStack();
+	if (held == nullptr)
+		return;
+	// A right click puts one item from the held stack in the slot, so the
+	// split is that many right clicks per slot: the server sees ordinary
+	// clicks. What does not divide evenly stays held.
+	const int_t perSlot = dragButton == 1 ? 1 : std::max<int_t>(1, held->stackSize / (int_t)slots.size());
+	for (Slot *slot : slots)
+		for (int_t n = 0; n < perSlot; ++n)
+		{
+			held = (p ? p : mc->thePlayer)->inventory->getItemStack();
+			if (held == nullptr)
+				return;
+			handleMouseClick(slot, slot->slotNumber, 1, false);
+		}
 }
 
 
@@ -415,9 +463,21 @@ void GuiContainer::mouseMovedOrUp(int_t x, int_t y, int_t button)
 	if (button < 0 && (lwjgl::Mouse::getEventDX() != 0 || lwjgl::Mouse::getEventDY() != 0))
 		ContainerSlotNavigator::instance(getOwnerPlayerIndex()).notePointerActivity();
 #endif
-	(void)x;
-	(void)y;
-	(void)button;
+	if (dragActive)
+	{
+		if (button == dragButton)
+		{
+			finishDrag();
+			return;
+		}
+		EntityPlayer *p = getContainerPlayer();
+		ItemStack *held = (p ? p : mc->thePlayer)->inventory->getItemStack();
+		Slot *slot = getSlotAtPosition(x, y);
+		if (held != nullptr && canDragInto(slot, held) &&
+			std::find(dragSlots.begin(), dragSlots.end(), slot) == dragSlots.end() &&
+			(dragButton == 1 || (int_t)dragSlots.size() < held->stackSize))
+			dragSlots.push_back(slot);
+	}
 }
 
 void GuiContainer::keyTyped(char_t c, int_t key)

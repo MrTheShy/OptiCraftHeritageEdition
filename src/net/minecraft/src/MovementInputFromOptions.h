@@ -20,4 +20,8 @@ public:
 private:
 	GameSettings *gameSettings;
 	int padPort;
+	// Console pads: sneak toggles on each press instead of being held.
+	bool sneakToggled = false;
+	bool sneakHeldLast = false;
+	bool sneakFromButton(bool held);
 };

@@ -10,6 +10,7 @@
 
 #include "SDL_video.h"
 #include "SDL_mouse.h"
+#include "SDL_touch.h"
 
 namespace lwjgl
 {
@@ -64,6 +65,14 @@ static std::queue<Event> event_queue;
 
 void pushEvent(const SDL_Event &e)
 {
+#ifdef VITA_PLATFORM
+	// In game (pointer grabbed) a touch is not a mouse click: SDL turns
+	// front-panel taps into left clicks, which attacked or broke a block.
+	// VitaPad::pollTouch handles the hotbar and chat taps.
+	if (VitaPad::grabbed() && (e.type == SDL_MOUSEBUTTONDOWN || e.type == SDL_MOUSEBUTTONUP) &&
+		e.button.which == SDL_TOUCH_MOUSEID)
+		return;
+#endif
 	switch (e.type)
 	{
 		case SDL_MOUSEMOTION:
@@ -190,6 +199,9 @@ bool isButtonDown(int_t button)
 #ifdef VITA_PLATFORM
 	if (sdlButton != 0 && VitaPad::mouseButtonDown(sdlButton))
 		return true;
+	// The only SDL mouse on the Vita is the touch panel (see pushEvent).
+	if (VitaPad::grabbed())
+		return false;
 #endif
 	return sdlButton != 0 && (SDL_GetMouseState(nullptr, nullptr) & SDL_BUTTON(sdlButton)) != 0;
 }

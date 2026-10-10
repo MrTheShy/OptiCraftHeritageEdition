@@ -18,6 +18,7 @@
 #include "java/String.h"
 #include "java/System.h"
 #include "pc/lwjgl/Keyboard.h"
+#include "platform/RenderAPI.h"
 #include "pc/lwjgl/Mouse.h"
 
 GuiChat::GuiChat()
@@ -250,8 +251,19 @@ void GuiChat::getSentHistory(int_t direction)
     }
 }
 
+int_t GuiChat::keyboardInset(Minecraft *mc, int_t guiHeight)
+{
+    const int pixels = lwjgl::Keyboard::screenKeyboardHeightPixels();
+    if (pixels <= 0 || mc == nullptr || mc->displayHeight <= 0)
+        return 0;
+    return (int_t)pixels * guiHeight / mc->displayHeight;
+}
+
 void GuiChat::drawScreen(int_t mouseX, int_t mouseY, float_t partialTick)
 {
+    const int_t inset = keyboardInset(mc, height);
+    renderPushMatrix();
+    renderTranslate(0.0f, (float_t)-inset, 0.0f);
 #if defined(PS2_PLATFORM) || defined(WII_PLATFORM)
     const int_t fieldY = height - 124;
 #else
@@ -260,6 +272,7 @@ void GuiChat::drawScreen(int_t mouseX, int_t mouseY, float_t partialTick)
     drawRect(2, fieldY, width - 2, fieldY + 12, 0x80000000);
     if (messageField != nullptr)
         messageField->drawTextBox();
+    renderPopMatrix();
     GuiScreen::drawScreen(mouseX, mouseY, partialTick);
 }
 

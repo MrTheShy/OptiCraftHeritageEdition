@@ -46,6 +46,21 @@ void MovementInputFromOptions::resetKeyState()
         KeyBinding::unPressAllKeys();
 }
 
+bool MovementInputFromOptions::sneakFromButton(bool held)
+{
+#if defined(PS2_PLATFORM) // Vita toggles in VitaPad (D-pad down holds LSHIFT)
+    // Holding a face/stick button to sneak is awkward on a pad: each press
+    // flips it. Everything else (pose, slow walk, edge guard) follows from
+    // the flag exactly as with a held key.
+    if (held && !sneakHeldLast)
+        sneakToggled = !sneakToggled;
+    sneakHeldLast = held;
+    return sneakToggled;
+#else
+    return held;
+#endif
+}
+
 void MovementInputFromOptions::updatePlayerMoveState(EntityPlayer *entityplayer)
 {
     (void)entityplayer;
@@ -68,7 +83,7 @@ void MovementInputFromOptions::updatePlayerMoveState(EntityPlayer *entityplayer)
             if (gameSettings->keyBindLeft->pressed) moveStrafe++;
             if (gameSettings->keyBindRight->pressed) moveStrafe--;
             jump = gameSettings->keyBindJump->pressed;
-            sneak = gameSettings->keyBindSneak->pressed;
+            sneak = sneakFromButton(gameSettings->keyBindSneak->pressed);
         }
     }
     else
@@ -78,7 +93,7 @@ void MovementInputFromOptions::updatePlayerMoveState(EntityPlayer *entityplayer)
         if (ps2Snap.connected && !(minecraft != nullptr && minecraft->isPlayerScreenActive(1)))
         {
             jump = (ps2Snap.held & PS2_PAD_CROSS) != 0;
-            sneak = (ps2Snap.held & PS2_PAD_R3) != 0;
+            sneak = sneakFromButton((ps2Snap.held & PS2_PAD_R3) != 0);
         }
         else
         {

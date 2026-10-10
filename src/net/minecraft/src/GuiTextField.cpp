@@ -286,6 +286,10 @@ void GuiTextField::mouseClicked(int_t x, int_t y, int_t button)
     bool inside = x >= xPos && x < xPos + width && y >= yPos && y < yPos + height;
     if (canLoseFocus)
         setFocused(isEnabled && inside);
+#ifdef VITA_PLATFORM
+    if (isEnabled && inside)
+        lwjgl::Keyboard::showScreenKeyboard();
+#endif
 
     if (isFocused && button == 0)
     {

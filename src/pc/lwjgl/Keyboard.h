@@ -187,6 +187,12 @@ jstring getKeyName(int_t key);
 bool next();
 void clearEvents();
 void enableRepeatEvents(bool repeat);
+// Opens the system on-screen keyboard (Vita IME) unless it is already up.
+// Typed characters arrive as ordinary text events. No-op on desktop.
+void showScreenKeyboard();
+// Screen pixels the on-screen keyboard covers at the bottom while it is open
+// (0 when closed or on platforms without one).
+int screenKeyboardHeightPixels();
 bool areRepeatEventsEnabled();
 
 char_t getEventCharacter();

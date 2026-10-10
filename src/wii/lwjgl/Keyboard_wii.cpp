@@ -100,6 +100,9 @@ bool isKeyDown(int_t key)
 	return detail::s_keyState[key];
 }
 
+// No on-screen keyboard panel covers the screen on Wii.
+int screenKeyboardHeightPixels() { return 0; }
+
 } // namespace Keyboard
 } // namespace lwjgl
 

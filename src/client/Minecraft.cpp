@@ -117,6 +117,7 @@
 #include "net/minecraft/src/RenderManager.h"
 #include "net/minecraft/src/AnvilSaveConverter.h"
 #include "net/minecraft/src/ScaledResolution.h"
+#include "net/minecraft/src/legacy/LegacyHudLayout.h"
 #include "net/minecraft/src/ScreenShotHelper.h"
 #include "net/minecraft/src/Session.h"
 #include "net/minecraft/src/SoundManager.h"

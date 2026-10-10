@@ -1,9 +1,12 @@
 #pragma once
 
+#include <vector>
+
 #include "GuiScreen.h"
 
 class Container;
 class Slot;
+class ItemStack;
 class RenderItem;
 class InventoryPlayer;
 class EntityPlayer;
@@ -70,4 +73,13 @@ public:
 
 private:
 	bool ownsInventorySlots;
+
+	// Drag a held stack across slots (touch or mouse): on release a left drag
+	// splits it evenly over them, a right drag puts one in each; a press
+	// released on the slot it started on is the ordinary click.
+	bool dragActive = false;
+	int_t dragButton = 0;
+	std::vector<Slot *> dragSlots;
+	bool canDragInto(Slot *slot, ItemStack *held);
+	void finishDrag();
 };

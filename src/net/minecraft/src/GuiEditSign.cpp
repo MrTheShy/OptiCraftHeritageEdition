@@ -40,6 +40,9 @@ void GuiEditSign::initGui()
 {
 	controlList.clear();
 	lwjgl::Keyboard::enableRepeatEvents(true);
+#ifdef VITA_PLATFORM
+	lwjgl::Keyboard::showScreenKeyboard();
+#endif
 	controlList.push_back(new GuiButton(0, width / 2 - 100, height / 4 + 120, uiText("Done")));
 	entitySign->setEditable(false);
 #if defined(PS2_PLATFORM) || defined(WII_PLATFORM)
