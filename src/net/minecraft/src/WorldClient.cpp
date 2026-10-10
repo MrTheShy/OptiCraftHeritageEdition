@@ -189,15 +189,17 @@ void WorldClient::tick()
 		}
 	}
 
-#if PLATFORM_WII
-	Minecraft *minecraft = Minecraft::getMinecraft();
-	if (minecraft != nullptr && minecraft->thePlayer != nullptr && minecraft->thePlayer->worldObj == this)
+	// The local player is not ticked while its chunks are missing, but in our
+	// tests CraftBukkit sent queued chunks only in reply to movement packets:
+	// after a teleport both sides waited and the world stayed black. Send the
+	// tick's movement packet from here when the player did not.
+	Minecraft *game = Minecraft::getMinecraft();
+	if (game != nullptr && game->thePlayer != nullptr && game->thePlayer->worldObj == this)
 	{
-		EntityClientPlayerMP *player = dynamic_cast<EntityClientPlayerMP *>(minecraft->thePlayer);
+		EntityClientPlayerMP *player = dynamic_cast<EntityClientPlayerMP *>(game->thePlayer);
 		if (player != nullptr)
 			player->flushMotionUpdatesForWorldTick();
 	}
-#endif
 
 
 #if !(PLATFORM_PS2 && PLATFORM_MP_DEFERRED_CHUNKS)
