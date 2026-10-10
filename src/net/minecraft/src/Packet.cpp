@@ -208,6 +208,8 @@ void Packet::addIdClassMapping(int_t id, bool clientPacket, bool serverPacket, s
 
 int_t Packet::getPacketId() const
 {
+	if (cachedPacketId >= 0)
+		return cachedPacketId;
 	initPacketMappings();
 	auto it = packetClassToIdMap.find(std::type_index(typeid(*this)));
 	if (it == packetClassToIdMap.end())
@@ -221,7 +223,9 @@ std::unique_ptr<Packet> Packet::getNewPacket(int_t id)
 	auto it = packetIdToFactoryMap.find(id);
 	if (it == packetIdToFactoryMap.end())
 		return nullptr;
-	return it->second();
+	std::unique_ptr<Packet> packet = it->second();
+	packet->cachedPacketId = id;
+	return packet;
 }
 
 std::unique_ptr<Packet> Packet::readPacket(std::istream &is, bool flag)
