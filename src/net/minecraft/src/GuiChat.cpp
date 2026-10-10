@@ -9,6 +9,10 @@
 #include "GuiIngame.h"
 #include "GuiPlayerInfo.h"
 #include "GuiTextField.h"
+
+#ifdef VITA_PLATFORM
+#include "lwjgl/VitaIme.h"
+#endif
 #include "Minecraft.h"
 #include "NetClientHandler.h"
 #include "java/String.h"
@@ -61,6 +65,9 @@ void GuiChat::initGui()
     messageField->setFocused(true);
     messageField->setText(initialMessage);
     messageField->setCanLoseFocus(false);
+#ifdef VITA_PLATFORM
+    lwjgl::VitaIme::open(messageField, true);
+#endif
 }
 
 void GuiChat::onGuiClosed()

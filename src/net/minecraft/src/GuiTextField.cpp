@@ -14,6 +14,10 @@
 #include "VirtualKeyboard.h"
 #endif
 
+#ifdef VITA_PLATFORM
+#include "lwjgl/VitaIme.h"
+#endif
+
 GuiTextField::GuiTextField(FontRenderer *fontrenderer, int_t x, int_t y, int_t w, int_t h)
     : GuiTextField(nullptr, fontrenderer, x, y, w, h, "")
 {
@@ -47,6 +51,13 @@ int_t GuiTextField::textLength() const
 {
     return String::utf16Length(text);
 }
+
+#ifdef VITA_PLATFORM
+GuiTextField::~GuiTextField()
+{
+    lwjgl::VitaIme::forget(this);
+}
+#endif
 
 void GuiTextField::updateCursorCounter()
 {
@@ -285,6 +296,10 @@ void GuiTextField::mouseClicked(int_t x, int_t y, int_t button)
             String::substringUtf16(text, lineScrollOffset, textLength()), getWidth());
         jstring beforeCursor = fontRenderer->trimStringToWidth(visible, std::max(0, localX));
         setCursorPosition(lineScrollOffset + String::utf16Length(beforeCursor));
+#ifdef VITA_PLATFORM
+        if (inside)
+            lwjgl::VitaIme::open(this);
+#endif
     }
 }
 

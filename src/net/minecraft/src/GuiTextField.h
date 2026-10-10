@@ -13,6 +13,9 @@ public:
 	GuiTextField(FontRenderer *fontrenderer, int_t x, int_t y, int_t w, int_t h);
 	GuiTextField(GuiScreen *parent, FontRenderer *fontrenderer,
 	             int_t x, int_t y, int_t w, int_t h, const jstring &initialText);
+#ifdef VITA_PLATFORM
+	~GuiTextField();
+#endif
 
 	void updateCursorCounter();
 	void setText(const jstring &s);

@@ -13,6 +13,7 @@
 #include "lwjgl/GLContext.h"
 #include "lwjgl/Keyboard.h"
 #include "lwjgl/Mouse.h"
+#include "lwjgl/VitaIme.h"
 
 #include "client/Minecraft.h"
 #include "net/minecraft/src/GameSettings.h"
@@ -320,6 +321,23 @@ void poll()
 	pressed[InputRight] = (pad.buttons & SCE_CTRL_RIGHT) != 0;
 	g_stickX = pad.lx;
 	g_stickY = pad.ly;
+
+	if (VitaIme::active())
+	{
+		VitaIme::update();
+		for (int i = 0; i < InputCount; ++i)
+		{
+			if (g_active[i].type != ActionType::None)
+			{
+				end(g_active[i]);
+				g_active[i] = Action();
+			}
+			g_previous[i] = pressed[i];
+		}
+		g_stickX = 128;
+		g_stickY = 128;
+		return;
+	}
 
 	for (int i = 0; i < InputCount; ++i)
 	{
