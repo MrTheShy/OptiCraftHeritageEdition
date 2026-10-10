@@ -3,6 +3,8 @@
 #include "GuiButton.h"
 #include "GuiTextField.h"
 #include "GuiTextFieldSelector.h"
+#include "GameSettings.h"
+#include "Minecraft.h"
 #include "ServerNBTStorage.h"
 #include "StringTranslate.h"
 #include "java/String.h"
@@ -33,6 +35,9 @@ void GuiScreenServerList::initGui()
     StringTranslate *translate = StringTranslate::getInstance();
     controlList.clear();
     delete serverTextField;
+    // lastAddress only lives as long as the process; options.txt keeps it.
+    if (lastAddress.empty() && mc != nullptr && mc->gameSettings != nullptr)
+        lastAddress = mc->gameSettings->lastServer;
     serverTextField = new GuiTextField(this, fontRenderer, width / 2 - 100, 116, 200, 20, lastAddress);
     serverTextField->setMaxStringLength(128);
     serverTextField->setFocused(true);
@@ -51,6 +56,11 @@ void GuiScreenServerList::onGuiClosed()
 #endif
     if (serverTextField != nullptr) lastAddress = serverTextField->getText();
     if (serverTextField != nullptr) serverTextField->setFocused(false);
+    if (mc != nullptr && mc->gameSettings != nullptr && static_cast<const std::string &>(mc->gameSettings->lastServer) != static_cast<const std::string &>(lastAddress))
+    {
+        mc->gameSettings->lastServer = lastAddress;
+        mc->gameSettings->saveOptions();
+    }
 }
 
 void GuiScreenServerList::actionPerformed(GuiButton *button)
