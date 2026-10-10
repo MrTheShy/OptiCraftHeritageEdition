@@ -301,6 +301,8 @@ void GameSettings::loadOptions()
 					ofSunMoon = value == "true";
 				if (key == "ofDepthFog")
 					ofDepthFog = value == "true";
+				if (key == "showHeldItemName")
+					showHeldItemName = value == "true";
 				if (key == "ofProfiler")
 					ofProfiler = value == "true";
 				if (key == "ofBetterSnow")
@@ -413,7 +415,7 @@ void GameSettings::saveOptions()
 		"ofAnimatedRedstone", "ofAnimatedExplosion", "ofAnimatedFlame",
 		"ofAnimatedSmoke", "ofFastDebugInfo", "ofAutoSaveTicks", "ofBetterGrass",
 		"ofWeather", "ofSky", "ofStars", "ofChunkUpdates", "ofChunkUpdatesDynamic",
-		"ofFarView", "ofTime", "ofClearWater", "ofSunMoon", "ofDepthFog",
+		"ofFarView", "ofTime", "ofClearWater", "ofSunMoon", "ofDepthFog", "showHeldItemName",
 		"ofProfiler", "ofBetterSnow", "ofSwampColors", "ofSmoothBiomes", "ofRandomMobs", "ofCustomColors", "ofConnectedTextures", "ofNaturalTextures",
 		"ofMipmapLevel", "ofMipmapLinear", "ofAaLevel", "ofAfLevel", "ofCustomFonts", "ofRenderDistanceFine",
 		"ofVoidParticles", "ofWaterParticles", "ofRainSplash", "ofPortalParticles",
@@ -535,6 +537,7 @@ void GameSettings::saveOptions()
 	printwriter << "ofClearWater:" << (ofClearWater ? "true" : "false") << "\n";
 	printwriter << "ofSunMoon:" << (ofSunMoon ? "true" : "false") << "\n";
 	printwriter << "ofDepthFog:" << (ofDepthFog ? "true" : "false") << "\n";
+	printwriter << "showHeldItemName:" << (showHeldItemName ? "true" : "false") << "\n";
 	printwriter << "ofProfiler:" << (ofProfiler ? "true" : "false") << "\n";
 	printwriter << "ofBetterSnow:" << (ofBetterSnow ? "true" : "false") << "\n";
 	printwriter << "ofSwampColors:" << (ofSwampColors ? "true" : "false") << "\n";

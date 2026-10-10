@@ -171,6 +171,7 @@ public:
 	bool ofClearWater;
 	bool ofSunMoon;
 	bool ofDepthFog;
+	bool showHeldItemName;    // item name above the hotbar for 2 s after switching (1.3+)
 	bool ofProfiler;
 	bool ofBetterSnow;
 	bool ofSwampColors;

@@ -81,6 +81,11 @@ private:
 	int_t updateCounter;
 	std::string recordPlaying;
 	int_t recordPlayingUpFor;
+	// Held item name shown above the hotbar for 2 s after switching (1.3+).
+	std::string heldName;
+	int_t heldNameTicks = 0;
+	int_t heldNameSlot = -1;
+	int_t heldNameItem = -1;
 	bool field_22065_l;        // record playing with color effect
 	int_t chatScroll;
 	bool isScrolled;

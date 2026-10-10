@@ -897,6 +897,20 @@ void GuiIngame::renderGameOverlay(float_t partialTick, bool showDebug, int_t mou
 	if (mc->gameSettings->showDebugInfo)
 		renderDebugOverlay(fr, sw);
 
+	if (heldNameTicks > 0 && mc->currentScreen == nullptr && mc->gameSettings->showHeldItemName)
+	{
+		int_t alpha = (int_t)(((float_t)heldNameTicks - partialTick) * 256.0f / 10.0f);
+		if (alpha > 255) alpha = 255;
+		if (alpha > 8)
+		{
+			renderEnable(RenderCapability::Blend);
+			renderBlendFunc(RenderBlendFactor::SrcAlpha, RenderBlendFactor::OneMinusSrcAlpha);
+			fr->drawStringWithShadow(heldName, (sw - fr->getStringWidth(heldName)) / 2, hudHeight - 59,
+				JavaArithmetic::intAdd(0xffffff, JavaArithmetic::intShl(alpha, 24)));
+			renderDisable(RenderCapability::Blend);
+		}
+	}
+
 	if (recordPlayingUpFor > 0)
 	{
 		float_t f2 = (float_t)recordPlayingUpFor - partialTick;
@@ -1136,6 +1150,28 @@ void GuiIngame::updateTick()
 	if (mc->currentScreen == nullptr)
 		LegacyTipHud::tick();
 	if (recordPlayingUpFor > 0) recordPlayingUpFor--;
+	if (heldNameTicks > 0) heldNameTicks--;
+	if (mc->gameSettings->showHeldItemName && mc->thePlayer != nullptr && mc->thePlayer->inventory != nullptr)
+	{
+		InventoryPlayer *inventory = mc->thePlayer->inventory;
+		ItemStack *held = inventory->getCurrentItem();
+		const int_t item = held != nullptr ? held->itemID : -1;
+		// Slot or item kind, not damage: a tool losing durability is the same item.
+		if (inventory->currentItem != heldNameSlot || item != heldNameItem)
+		{
+			heldNameSlot = inventory->currentItem;
+			heldNameItem = item;
+			heldNameTicks = 0;
+			if (held != nullptr)
+			{
+				std::vector<std::string> lines = held->getItemNameandInformation();
+				// Mods may rename it. The hotbar is window 0, slots 36-44, as the server counts.
+				ModManager::getInstance().onItemTooltip(lines, 0, 36 + inventory->currentItem, held);
+				heldName = lines.empty() ? std::string() : lines[0];
+				heldNameTicks = heldName.empty() ? 0 : 40;
+			}
+		}
+	}
 	updateCounter++;
 	for (int_t i = 0; i < (int_t)chatMessageList.size(); i++)
 		chatMessageList[i]->updateCounter++;

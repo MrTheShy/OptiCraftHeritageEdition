@@ -185,6 +185,7 @@ void GameSettings::setDefaults()
     ofClearWater = false;
     ofSunMoon = true;
     ofDepthFog = true;
+    showHeldItemName = false;
     ofProfiler = false;
     ofBetterSnow = false;
     ofSwampColors = true;
@@ -753,6 +754,8 @@ void GameSettings::setOptionValue(const EnumOptions *enumoptions, int_t i)
         ofSunMoon = !ofSunMoon;
     if (enumoptions == EnumOptions::DEPTH_FOG)
         ofDepthFog = !ofDepthFog;
+    if (enumoptions == EnumOptions::HELD_ITEM_NAME)
+        showHeldItemName = !showHeldItemName;
     if (enumoptions == EnumOptions::PROFILER)
         ofProfiler = !ofProfiler;
     if (enumoptions == EnumOptions::BETTER_SNOW)
@@ -1120,6 +1123,8 @@ std::string GameSettings::getKeyBinding(const EnumOptions *enumoptions)
         return s + (ofSunMoon ? uiText("ON") : uiText("OFF"));
     if (enumoptions == EnumOptions::DEPTH_FOG)
         return s + (ofDepthFog ? uiText("ON") : uiText("OFF"));
+    if (enumoptions == EnumOptions::HELD_ITEM_NAME)
+        return s + (showHeldItemName ? uiText("ON") : uiText("OFF"));
     if (enumoptions == EnumOptions::PROFILER)
         return s + (ofProfiler ? uiText("ON") : uiText("OFF"));
     if (enumoptions == EnumOptions::BETTER_SNOW)
