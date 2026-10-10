@@ -111,4 +111,9 @@ vita_create_self(eboot.bin OptiCraft UNSAFE)
 vita_create_vpk(${VITA_APP_NAME}.vpk ${VITA_TITLEID} eboot.bin
     VERSION ${VITA_VERSION}
     NAME ${VITA_APP_NAME}
+    FILE ${CMAKE_CURRENT_SOURCE_DIR}/vita/sce_sys/icon0.png sce_sys/icon0.png
+    FILE ${CMAKE_CURRENT_SOURCE_DIR}/vita/sce_sys/pic0.png sce_sys/pic0.png
+    FILE ${CMAKE_CURRENT_SOURCE_DIR}/vita/sce_sys/livearea/contents/bg.png sce_sys/livearea/contents/bg.png
+    FILE ${CMAKE_CURRENT_SOURCE_DIR}/vita/sce_sys/livearea/contents/startup.png sce_sys/livearea/contents/startup.png
+    FILE ${CMAKE_CURRENT_SOURCE_DIR}/vita/sce_sys/livearea/contents/template.xml sce_sys/livearea/contents/template.xml
 )
