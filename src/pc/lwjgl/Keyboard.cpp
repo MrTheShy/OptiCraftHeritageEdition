@@ -119,7 +119,7 @@ static int_t keyLWJGLToSDL(int_t key)
 		case 73: return SDLK_KP_9;
 		case 200: return SDLK_UP;
 		case 74: return SDLK_KP_MINUS;
-		case 201: return SDLK_PRIOR;
+		case 201: return SDLK_PAGEUP;
 		case 75: return SDLK_KP_4;
 		case 76: return SDLK_KP_5;
 		case 203: return SDLK_LEFT;
@@ -132,7 +132,7 @@ static int_t keyLWJGLToSDL(int_t key)
 		case 81: return SDLK_KP_3;
 		case 208: return SDLK_DOWN;
 		case 82: return SDLK_KP_0;
-			// case 209: return SDLK_AC_FORWARD;
+		case 209: return SDLK_PAGEDOWN;
 		case 83: return SDLK_KP_DECIMAL;
 		case 210: return SDLK_INSERT;
 		case 87: return SDLK_F11;
@@ -288,6 +288,8 @@ static int_t keySDLToLWJGL(int_t key)
 		case SDLK_SYSREQ: return 183;
 		case SDLK_PAUSE: return 197;
 		case SDLK_PRIOR: return 201;
+		case SDLK_PAGEUP: return 201;
+		case SDLK_PAGEDOWN: return 209;
 		case SDLK_UP: return 200;
 		case SDLK_LEFT: return 203;
 			// case SDLK_AC_FORWARD: return 209;

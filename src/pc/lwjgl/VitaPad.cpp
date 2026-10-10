@@ -139,6 +139,8 @@ Action actionFor(int input, bool inGame, bool pointerMode)
 		case InputCircle: return key(SDLK_ESCAPE);
 		case InputTriangle: return key(SDLK_e);
 		case InputStart: return key(SDLK_ESCAPE);
+		case InputLTrigger: return key(SDLK_PAGEUP);
+		case InputRTrigger: return key(SDLK_PAGEDOWN);
 		case InputUp: return key(SDLK_UP);
 		case InputDown: return key(SDLK_DOWN);
 		case InputLeft: return key(SDLK_LEFT);
