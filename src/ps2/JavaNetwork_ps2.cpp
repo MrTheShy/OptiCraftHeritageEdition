@@ -141,9 +141,45 @@ public:
             std::memcpy(&target.sin_addr, resolved->h_addr_list[0], sizeof(target.sin_addr));
         }
 
+        // The stack starts on the first connection, and after the fixed DHCP
+        // grace period the lease can still be missing: connect() then fails
+        // with errno 113 and a second attempt a moment later succeeds. Retry
+        // that failure (and the no-route errnos) for up to 15 s; a cancel from
+        // the connecting screen stops the wait within 100 ms.
+        Ps2Network::clearConnectCancel();
+        for (int attempt = 0;; ++attempt)
+        {
+            int errorCode = 0;
+            if (connectOnce(target, host, port, errorCode))
+                break;
+            const bool retryable = errorCode == 113 || errorCode == 101 ||
+                                   errorCode == EHOSTUNREACH || errorCode == ENETUNREACH;
+            if (!retryable || attempt >= 15)
+                return false;
+            for (int slice = 0; slice < 10; ++slice)
+            {
+                if (Ps2Network::connectCancelled())
+                    return false;
+                DelayThread(100000);
+            }
+            closing.store(false, std::memory_order_release);
+        }
+        MC_LOG_INFO("network", "[PS2] TCP connected to %s:%d\n", host.c_str(), port);
+        McLog::flush();
+        return true;
+#endif
+    }
+
+#ifndef PS2_REMOTE_DEBUG
+    // One socket + connect(). On failure the socket is released and errno kept.
+    bool connectOnce(sockaddr_in &target, const std::string &host, int port, int &errorCode)
+    {
         const int newFd = ::socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
         if (newFd < 0)
+        {
+            errorCode = errno;
             return false;
+        }
 
         // Player movement and interaction packets are small and latency-sensitive.
         // Disable Nagle so lwIP does not deliberately hold them while waiting for
@@ -157,16 +193,14 @@ public:
         McLog::flush();
         if (::connect(newFd, reinterpret_cast<sockaddr *>(&target), sizeof(target)) < 0)
         {
-            const int errorCode = errno;
+            errorCode = errno;
             MC_LOG_WARN("network", "[PS2] TCP connect failed errno=%d\n", errorCode);
             releaseSocket();
             return false;
         }
-        MC_LOG_INFO("network", "[PS2] TCP connected to %s:%d\n", host.c_str(), port);
-        McLog::flush();
         return true;
-#endif
     }
+#endif
 
     int read(char *buffer, int length) override
     {

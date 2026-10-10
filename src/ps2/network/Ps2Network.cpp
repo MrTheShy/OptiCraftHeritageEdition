@@ -185,6 +185,15 @@ bool initialize()
 #endif
 }
 
+namespace
+{
+std::atomic<bool> s_connectCancelled{false};
+}
+
+void cancelPendingConnect() { s_connectCancelled.store(true, std::memory_order_release); }
+void clearConnectCancel() { s_connectCancelled.store(false, std::memory_order_release); }
+bool connectCancelled() { return s_connectCancelled.load(std::memory_order_acquire); }
+
 bool isReady()
 {
     return s_ready.load(std::memory_order_acquire);
