@@ -140,7 +140,7 @@ void GuiMultiplayer::loadServerList()
 
     auto it = std::find_if(serverList.begin(), serverList.end(),
         [&](const std::shared_ptr<ServerNBTStorage> &s) {
-            return s != nullptr && s->host == defaultHost;
+            return s != nullptr && static_cast<const std::string &>(s->host) == defaultHost;
         });
 
     if (it == serverList.end())
