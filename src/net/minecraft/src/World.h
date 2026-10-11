@@ -296,6 +296,9 @@ public:
 	// before every `delete entity`. No-op in base World.
 	virtual void onEntityRemoved(Entity *entity);
 	bool isLoadedEntityPointer(const Entity *entity) const;
+	// Swaps the skin of an entity that is in the world: the renderers drop the
+	// old URL and fetch the new one. Leaves the client's spawn queue alone.
+	void changeEntitySkin(Entity *entity, const std::string &url);
 	bool isLoadedTileEntityPointer(const TileEntity *tileEntity) const;
 	virtual void detachEntityForWorldChange(Entity *entity);
 	void addWorldAccess(IWorldAccess *iworldaccess);

@@ -234,6 +234,8 @@ void GuiContainer::drawScreen(int_t mouseX, int_t mouseY, float_t partialTick)
 	{
 		ItemStack *hoveredStack = hoveredSlot->getStack();
 		std::vector<std::string> information = hoveredStack->getItemNameandInformation();
+		ModManager::getInstance().onItemTooltip(information, inventorySlots != nullptr ? inventorySlots->windowId : 0,
+		                                        hoveredSlot->slotNumber, hoveredStack);
 		if (!information.empty())
 		{
 			int_t tooltipWidth = 0;

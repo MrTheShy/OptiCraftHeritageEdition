@@ -2882,6 +2882,13 @@ void World::releaseEntitySkin(Entity* entity)
     }
 }
 
+void World::changeEntitySkin(Entity *entity, const std::string &url)
+{
+    World::releaseEntitySkin(entity);
+    entity->skinUrl = url;
+    World::obtainEntitySkin(entity);
+}
+
 void World::onEntityRemoved(Entity* entity)
 {
     if (villageCollectionObj != nullptr)

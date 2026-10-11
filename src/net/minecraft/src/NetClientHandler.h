@@ -223,6 +223,9 @@ public:
     void handlePlayerInfo(Packet201PlayerInfo &p) override              { handlePlayerInfo(&p); }
     void handlePlayerAbilities(Packet202PlayerAbilities &p) override    { handlePlayerAbilities(&p); }
     void handleCloseWindow(Packet101CloseWindow &p) override          { handleCloseWindow(&p); }
+    // Packet250 plugin messages go to the mods (mods/IMod.h).
+    void handleCustomPayload(Packet250CustomPayload &packet) override;
+    void sendPluginMessage(const std::string &channel, const std::string &data);
     // handleErrorMessage already has the correct reference signature above — no wrapper needed.
 
     // Getters
@@ -243,6 +246,7 @@ private:
 
     bool disconnected;
     bool playerControllerOwnsHandler = false;
+    bool serverJoinNotified = false;
     NetworkManager* netManager;
     std::string serverHostname;  // field_1209_a
     Minecraft* mc;

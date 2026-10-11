@@ -66,6 +66,7 @@
 #include "net/minecraft/src/ColorizerWater.h"
 #include "net/minecraft/src/EffectRenderer.h"
 #include "net/minecraft/src/EntityClientPlayerMP.h"
+#include "platform/FrameRateOverride.h"
 #include "net/minecraft/src/EntityPlayer.h"
 #include "net/minecraft/src/EntityPlayerSP.h"
 #include "net/minecraft/src/EntityRenderer.h"
@@ -969,6 +970,12 @@ void Minecraft::run()
                     static long_t lastFrameStartNs = 0;
                     int_t cap = gameSettings != nullptr ? gameSettings->limitFramerate : 2;
                     cap = cap < 0 ? 0 : (cap > 2 ? 2 : cap);
+                    // A runtime target (a server's, for this map) can lower the cap,
+                    // never raise the player's own setting.
+                    if (FrameRateOverride::get() > 0 && FrameRateOverride::get() <= 30)
+                        cap = 2;
+                    else if (FrameRateOverride::get() > 30 && cap == 0)
+                        cap = 1;
                     if (cap != appliedCap)
                     {
                         lwjgl::Display::setSwapInterval(cap);

@@ -4,6 +4,8 @@
 #include <algorithm>
 #include <iostream>
 #include <cctype>
+#include <sstream>
+#include <cstdlib>
 #include <stdexcept>
 #include "java/String.h"
 #include "java/JavaNetwork.h"
@@ -44,6 +46,9 @@
 #include "EntityLightningBolt.h"
 #include "EntityPainting.h"
 #include "EntityOtherPlayerMP.h"
+#include "Packet250CustomPayload.h"
+#include "RenderGlobal.h"
+#include "mods/ModManager.h"
 #include "InventoryPlayer.h"
 #include "EntityPlayer.h"
 #include "FoodStats.h"
@@ -166,6 +171,10 @@ NetClientHandler::NetClientHandler(Minecraft* minecraft, const std::string& host
 NetClientHandler::~NetClientHandler()
 {
     disconnected = true;
+    // Only a connection that reached the login told the mods it joined; a
+    // cancelled connect is deleted on its connect thread and must not touch them.
+    if (serverJoinNotified)
+        ModManager::getInstance().onServerLeave(this);
     delete netManager;
     netManager = nullptr;
     delete mapStorage;
@@ -206,6 +215,23 @@ void NetClientHandler::handleLogin(Packet1Login* packet)
     mc->thePlayer->entityId = packet->protocolVersion;
     currentServerMaxPlayers = static_cast<int_t>(static_cast<unsigned char>(packet->maxPlayers));
     static_cast<PlayerControllerMP *>(mc->playerController)->setCreative(packet->serverMode == 1);
+    serverJoinNotified = true;
+    ModManager::getInstance().onServerJoin(this);
+}
+
+void NetClientHandler::sendPluginMessage(const std::string &channel, const std::string &data)
+{
+    Packet250CustomPayload *packet = new Packet250CustomPayload();
+    packet->channel = channel;
+    packet->data.assign(data.begin(), data.end());
+    packet->length = static_cast<int_t>(packet->data.size());
+    addToSendQueue(packet);
+}
+
+void NetClientHandler::handleCustomPayload(Packet250CustomPayload &packet)
+{
+    if (serverJoinNotified) // nothing reaches the mods before the login packet
+        ModManager::getInstance().onPluginMessage(packet.channel, packet.data);
 }
 
 void NetClientHandler::handlePickupSpawn(Packet21PickupSpawn* packet)
@@ -486,6 +512,7 @@ void NetClientHandler::handleNamedEntitySpawn(Packet20NamedEntitySpawn* packet)
     }
     
     otherPlayer->setPositionAndRotation(posX, posY, posZ, yaw, pitch);
+    ModManager::getInstance().onNamedEntitySpawn(otherPlayer, packet->entityId);
     worldClient->addEntityToWorld(packet->entityId, otherPlayer);
 }
 
@@ -1219,6 +1246,7 @@ void NetClientHandler::handleExplosion(Packet60Explosion* packet)
 
 void NetClientHandler::handleOpenWindow(Packet100OpenWindow* packet)
 {
+    ModManager::getInstance().onWindowOpened(packet->windowId);
     if (packet->inventoryType == 0)
     {
         // Chest

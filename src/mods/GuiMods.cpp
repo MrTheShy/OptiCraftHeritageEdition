@@ -39,9 +39,7 @@ public:
             if (currentMouseX >= toggleBtnLeft)
             {
                 // Clicked toggle button on right
-                bool newState = !mods[index]->isEnabled();
-                mods[index]->setEnabled(newState);
-                ModManager::getInstance().save();
+                ModManager::getInstance().setModEnabled(mods[index]->getId(), !mods[index]->isEnabled());
 
                 if (parent->mc != nullptr && parent->mc->sndManager != nullptr)
                     parent->mc->sndManager->playSoundFX("random.click", 1.0f, 1.0f);
@@ -56,9 +54,7 @@ public:
 
                 if (doubleClicked)
                 {
-                    bool newState = !mods[index]->isEnabled();
-                    mods[index]->setEnabled(newState);
-                    ModManager::getInstance().save();
+                    ModManager::getInstance().setModEnabled(mods[index]->getId(), !mods[index]->isEnabled());
                 }
             }
         }
