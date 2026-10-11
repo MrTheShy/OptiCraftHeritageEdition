@@ -1,5 +1,6 @@
 #include "ModManager.h"
 #include "Minecraft.h"
+#include "NetClientHandler.h"
 #include "java/File.h"
 #include "platform/Storage.h"
 #include "platform/Log.h"
@@ -10,6 +11,7 @@
 #include "reiminimap/ReiMinimapMod.h"
 #include "strongholdlocator/StrongholdLocatorMod.h"
 
+#include <algorithm>
 #include <cstdio>
 
 ModManager::ModManager()
@@ -102,11 +104,20 @@ bool ModManager::isModEnabled(const std::string &id)
 void ModManager::setModEnabled(const std::string &id, bool enabled)
 {
     IMod *mod = getMod(id);
-    if (mod != nullptr)
+    if (mod == nullptr)
+        return;
+    const bool changed = mod->isEnabled() != enabled;
+    mod->setEnabled(enabled);
+    if (changed && connection != nullptr)
     {
-        mod->setEnabled(enabled);
-        save();
+        // Switched while connected: tell the server, and join or leave now.
+        announceChannels(enabled ? "REGISTER" : "UNREGISTER", mod->getPluginChannels());
+        if (enabled)
+            mod->onServerJoin(connection);
+        else
+            mod->onServerLeave();
     }
+    save();
 }
 
 std::string ModManager::getGameModsDir() const
@@ -411,4 +422,82 @@ bool ModManager::onContainerKeyTyped(char_t c, int_t key)
         }
     }
     return false;
+}
+
+void ModManager::announceChannels(const char *verb, const std::vector<std::string> &channels)
+{
+    if (connection == nullptr || channels.empty())
+        return;
+    std::string names;
+    for (const std::string &channel : channels)
+    {
+        if (!names.empty())
+            names += '\0';
+        names += channel;
+    }
+    connection->sendPluginMessage(verb, names);
+}
+
+void ModManager::sendPluginMessage(const std::string &channel, const std::string &data)
+{
+    if (connection != nullptr)
+        connection->sendPluginMessage(channel, data);
+}
+
+void ModManager::onServerJoin(NetClientHandler *net)
+{
+    connection = net;
+    std::vector<std::string> channels;
+    for (auto &mod : mods)
+        if (mod->isEnabled())
+            for (const std::string &channel : mod->getPluginChannels())
+                if (std::find(channels.begin(), channels.end(), channel) == channels.end())
+                    channels.push_back(channel);
+    announceChannels("REGISTER", channels);
+    for (auto &mod : mods)
+        if (mod->isEnabled())
+            mod->onServerJoin(net);
+}
+
+void ModManager::onServerLeave(NetClientHandler *net)
+{
+    if (net != connection)
+        return; // an older connection going away after a newer one joined
+    connection = nullptr;
+    for (auto &mod : mods)
+        if (mod->isEnabled())
+            mod->onServerLeave();
+}
+
+void ModManager::onPluginMessage(const std::string &channel, const std::vector<byte_t> &data)
+{
+    for (auto &mod : mods)
+    {
+        if (!mod->isEnabled())
+            continue;
+        const std::vector<std::string> channels = mod->getPluginChannels();
+        if (std::find(channels.begin(), channels.end(), channel) != channels.end())
+            mod->onPluginMessage(channel, data);
+    }
+}
+
+void ModManager::onNamedEntitySpawn(EntityOtherPlayerMP *player, int_t entityId)
+{
+    for (auto &mod : mods)
+        if (mod->isEnabled())
+            mod->onNamedEntitySpawn(player, entityId);
+}
+
+void ModManager::onWindowOpened(int_t windowId)
+{
+    for (auto &mod : mods)
+        if (mod->isEnabled())
+            mod->onWindowOpened(windowId);
+}
+
+void ModManager::onItemTooltip(std::vector<std::string> &lines, int_t windowId, int_t slot, ItemStack *stack)
+{
+    for (auto &mod : mods)
+        if (mod->isEnabled())
+            mod->onItemTooltip(lines, windowId, slot, stack);
 }

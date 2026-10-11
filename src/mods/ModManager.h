@@ -10,6 +10,9 @@
 class Minecraft;
 class GuiContainer;
 class GuiIngame;
+class NetClientHandler;
+class EntityOtherPlayerMP;
+class ItemStack;
 
 class ModManager
 {
@@ -44,6 +47,15 @@ public:
     void onDrawContainer(GuiContainer *container, int_t mouseX, int_t mouseY);
     bool onContainerMouseClicked(GuiContainer *container, int_t x, int_t y, int_t button);
     bool onContainerKeyTyped(char_t c, int_t key);
+    void onServerJoin(NetClientHandler *net);
+    void onServerLeave(NetClientHandler *net);
+    void onPluginMessage(const std::string &channel, const std::vector<byte_t> &data);
+    void onNamedEntitySpawn(EntityOtherPlayerMP *player, int_t entityId);
+    void onWindowOpened(int_t windowId);
+    void onItemTooltip(std::vector<std::string> &lines, int_t windowId, int_t slot, ItemStack *stack);
+
+    // Packet250 to the current server; does nothing when not connected.
+    void sendPluginMessage(const std::string &channel, const std::string &data);
 
 private:
     ModManager();
@@ -52,8 +64,11 @@ private:
     ModManager &operator=(const ModManager &) = delete;
 
     std::string getConfigPath() const;
+    // Bukkit REGISTER / UNREGISTER: channel names separated by NUL.
+    void announceChannels(const char *verb, const std::vector<std::string> &channels);
 
     Minecraft *mc;
     std::vector<std::unique_ptr<IMod>> mods;
     bool initialized;
+    NetClientHandler *connection = nullptr; // between onServerJoin and onServerLeave
 };
