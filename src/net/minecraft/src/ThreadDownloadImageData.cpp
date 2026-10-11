@@ -13,6 +13,11 @@ ThreadDownloadImageData::ThreadDownloadImageData(const std::string &s, ImageBuff
 	downloadThread->start();
 }
 
+bool ThreadDownloadImageData::downloadFinished() const
+{
+	return downloadThread == nullptr || downloadThread->finished();
+}
+
 ThreadDownloadImageData::~ThreadDownloadImageData()
 {
 	// The worker owns only a non-owning pointer back to this object. Join it

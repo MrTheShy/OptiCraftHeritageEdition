@@ -78,4 +78,5 @@ uint32_t __atomic_fetch_sub_4(volatile void *ptr, uint32_t value, int memorder)
     return previous;
 }
 
+
 #endif // PS2_PLATFORM

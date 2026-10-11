@@ -274,6 +274,9 @@ bool BiomeDecorator::advanceDecoration()
     {
         const DecorationStage *stage;
         std::uint32_t start;
+#if MC_LOG_LEVEL > 0
+        long long startNs = System::nanoTime();
+#endif
         explicit StageScope(const DecorationStage *s)
             : stage(s), start(platformProfileRenderPhaseBegin()) {}
         ~StageScope()

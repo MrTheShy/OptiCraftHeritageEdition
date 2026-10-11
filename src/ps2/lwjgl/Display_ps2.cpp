@@ -17,6 +17,7 @@
 #include "ps2/input/Ps2Input.h"
 #include "ps2/render/Ps2RenderPhase.h"
 #include "ps2/tuning/Ps2FramePacingPolicy.h"
+#include "platform/FrameRateOverride.h"
 #include "ps2/system/Ps2Perf.h"
 #include "java/System.h"
 
@@ -771,15 +772,19 @@ void swapBuffers()
     // the old fallback paid every configured field even if the frame had already
     // overrun its budget. The hardware clock is monotonic and already backs the
     // renderer's per-frame budgets.
+    // A target set at runtime (e.g. by the server for this map), or the build's.
+    const int targetFps = FrameRateOverride::get() > 0 ? FrameRateOverride::get() : PS2_TARGET_FPS;
     static int s_fieldsPerFrame = 0;
-    if (s_fieldsPerFrame == 0)
+    static int s_fieldsTargetFps = 0;
+    if (s_fieldsTargetFps != targetFps)
     {
         const int fieldHz = (gsGlobal->Mode == GS_MODE_PAL) ? 50 : 60;
-        s_fieldsPerFrame = Ps2FramePacingPolicy::fieldsPerFrame(fieldHz, PS2_TARGET_FPS);
+        s_fieldsPerFrame = Ps2FramePacingPolicy::fieldsPerFrame(fieldHz, targetFps);
+        s_fieldsTargetFps = targetFps;
     }
 
     static std::uint64_t s_lastPresentUs = 0;
-    const std::uint64_t periodUs = Ps2FramePacingPolicy::targetPeriodUs(PS2_TARGET_FPS);
+    const std::uint64_t periodUs = Ps2FramePacingPolicy::targetPeriodUs(targetFps);
 
     // The first field is not optional. DISPFB2 is not latched at vblank, so the
     // flip below lands on whatever raster line the CRTC is scanning: presenting

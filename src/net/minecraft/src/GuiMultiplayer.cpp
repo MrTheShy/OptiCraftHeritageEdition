@@ -134,6 +134,18 @@ void GuiMultiplayer::loadServerList()
     {
         MC_LOG_WARN("network", "Unable to read servers.dat: %s\n", exception.what());
     }
+
+#ifdef OPTICRAFT_EXTRA_SERVER
+    // Build-time "name|host:port" (e.g. a LAN server), listed first.
+    const std::string extra = OPTICRAFT_EXTRA_SERVER;
+    const std::string::size_type bar = extra.find('|');
+    const std::string extraName = bar == std::string::npos ? extra : extra.substr(0, bar);
+    const std::string extraHost = bar == std::string::npos ? extra : extra.substr(bar + 1);
+    const bool listed = std::any_of(serverList.begin(), serverList.end(),
+        [&](const std::shared_ptr<ServerNBTStorage> &s) { return s != nullptr && s->host == extraHost; });
+    if (!extraHost.empty() && !listed)
+        serverList.insert(serverList.begin(), std::make_shared<ServerNBTStorage>(extraName, extraHost));
+#endif
 }
 
 void GuiMultiplayer::saveServerList()

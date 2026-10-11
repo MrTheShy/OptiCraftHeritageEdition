@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <string>
 #include <thread>
 
@@ -15,10 +16,13 @@ public:
 
 	void start();
 	void run();
+	// True once run() has returned: the destructor will not wait.
+	bool finished() const { return done.load(); }
 
 private:
 	std::string location;
 	ImageBuffer *buffer;
 	ThreadDownloadImageData *imageData;
 	std::thread worker;
+	std::atomic<bool> done{false};
 };

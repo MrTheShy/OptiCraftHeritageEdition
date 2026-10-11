@@ -58,6 +58,8 @@ option(PS2_RENDER_STATS "Enable verbose PS2 render statistics counters" OFF)
 option(PS2_OPTIMIZATION_VALIDATION "Enable low-overhead counters for validating PS2 optimization paths" OFF)
 option(PS2_REMOTE_DEBUG "Enable hardware remote debugging through ps2link/ps2client" OFF)
 option(PS2_ENABLE_SOUND "Enable PS2 audsrv ADPCM sound backend" ON)
+set(PS2_EXTRA_SERVER "" CACHE STRING "Extra multiplayer list entry, \"name|host:port\" (empty = none)")
+option(PS2_ENABLE_LTO "Compile the application with -flto (cross-file inlining of hot helpers such as ChunkCache::getBlockId)" OFF)
 option(PS2_ENABLE_NETWORK "Enable PS2 TCP multiplayer through PS2SDK ps2ip/SMAP" ON)
 
 if(PS2_OPTIMIZATION_VALIDATION AND MC_LOG_LEVEL LESS 1)
@@ -169,6 +171,10 @@ set(PS2_REQUIRED_SHIMS
     # Supplies __atomic_exchange_4; -mno-llsc leaves it as an unresolved libcall.
     "${CMAKE_SOURCE_DIR}/src/ps2/system/Ps2Atomic.c"
 )
+# The __atomic_* libcalls are only referenced by code GCC emits after LTO, so
+# an LTO copy of them would be dropped before anything asks for it.
+set_source_files_properties("${CMAKE_SOURCE_DIR}/src/ps2/system/Ps2Atomic.c"
+    PROPERTIES COMPILE_OPTIONS "-fno-lto")
 
 # libps2ip can change .data ordering enough for PS2SDK libkernel's errno archive
 # member to land only 2-byte aligned. errno is a 32-bit int, so provide a known-
@@ -228,9 +234,15 @@ if(CMAKE_BUILD_TYPE STREQUAL "Release")
 		KEEP(*(.gcc_except_table.*))
 	}
 	.eh_frame ALIGN(128): {
-		KEEP(*(.eh_frame))
+		KEEP(*crtbegin*.o(.eh_frame))
+		KEEP(*(EXCLUDE_FILE(*crtend*.o) .eh_frame))
 		KEEP(*(.eh_frame.*))
+		KEEP(*crtend*.o(.eh_frame))
 	}")
+# crtbegin registers the unwind tables from its own .eh_frame onward and
+# crtend's zero word ends them. With LTO the linker places the LTO object's
+# .eh_frame ahead of crtbegin's, which made every LTO frame invisible to the
+# unwinder (any throw through game code ended in terminate).
         string(REPLACE "${_PS2_EXCEPTION_RULE}" "${_PS2_EXCEPTION_RULE_SAFE}"
             _ps2_linkfile_text "${_ps2_linkfile_text}")
     endif()
@@ -321,7 +333,22 @@ target_compile_options(OptiCraft PRIVATE
     "SHELL:--param l2-cache-size=0"
     $<$<CONFIG:Release>:-ffunction-sections>
     $<$<CONFIG:Release>:-fdata-sections>
+    $<$<BOOL:${PS2_ENABLE_LTO}>:-flto>
 )
+
+if(PS2_ENABLE_LTO)
+    # src/ps2 (GS/DMA/VU/IOP glue) is kept out of LTO: with it in the LTO unit
+    # startGame hung at varying points on PCSX2.
+    foreach(_ps2_src IN LISTS PS2_SOURCES)
+        if(_ps2_src MATCHES "[/\\\\]src[/\\\\]ps2[/\\\\]")
+            set_property(SOURCE "${_ps2_src}" APPEND PROPERTY COMPILE_OPTIONS "-fno-lto")
+        endif()
+    endforeach()
+endif()
+
+if(PS2_EXTRA_SERVER)
+    target_compile_definitions(OptiCraft PRIVATE "OPTICRAFT_EXTRA_SERVER=\"${PS2_EXTRA_SERVER}\"")
+endif()
 
 target_compile_definitions(OptiCraft PRIVATE
     "_EE"
@@ -377,6 +404,7 @@ target_link_directories(OptiCraft PRIVATE
 
 target_link_libraries(OptiCraft
     gskit dmakit dma graph
+    $<$<VERSION_GREATER:${MC_LOG_LEVEL},0>:eedebug>
     patches pad mc vux
     $<$<BOOL:${PS2_ENABLE_SOUND}>:audsrv>
     z
@@ -404,6 +432,10 @@ target_link_options(OptiCraft PRIVATE
     # A single partition also avoids the Windows/MSYS lto-wrapper make/shell path.
     -flto=1
     -flto-partition=none
+    # Application LTO: the C objects (minizip, shims) carry no -fexceptions and
+    # lto-wrapper then generates the whole program without unwind tables, so a
+    # catch(...) around a throw from a non-LTO file never matches (terminate).
+    $<$<BOOL:${PS2_ENABLE_LTO}>:-fexceptions>
 )
 
 # Mirror the desktop build's predictable output location.

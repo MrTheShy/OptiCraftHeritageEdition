@@ -136,7 +136,10 @@
 #endif
 
 #ifndef PLATFORM_PROFILE_STREAMING
-#  define PLATFORM_PROFILE_STREAMING (PLATFORM_PS2 || PLATFORM_WII)
+// Only where the backend writes the report: PS2 at MC_LOG_LEVEL >= 2
+// (ClientProfilerBackend_PS2), Wii at >= 1 (MC_LOG_INFO). Below that the
+// timers are pure cost.
+#  define PLATFORM_PROFILE_STREAMING ((PLATFORM_PS2 && MC_LOG_LEVEL >= 2) || (PLATFORM_WII && MC_LOG_LEVEL >= 1))
 #endif
 
 // PS2 region files keep a whole-region write buffer, so a modified chunk can be
@@ -148,7 +151,11 @@
 #endif
 
 #ifndef PLATFORM_PROFILE_RENDER_PHASES
-#  define PLATFORM_PROFILE_RENDER_PHASES (PLATFORM_PS2 || PLATFORM_WII)
+// Same thresholds as PLATFORM_PROFILE_STREAMING: the phase report is written
+// by ClientProfilerBackend_PS2::frameEnd at >= 2 and by the Wii backend at >= 1.
+#  define PLATFORM_PROFILE_RENDER_PHASES ((PLATFORM_PS2 && MC_LOG_LEVEL >= 2) || (PLATFORM_WII && MC_LOG_LEVEL >= 1))
+#endif
+
 // Test builds only: also run the slow path behind the entity/chunk lookup
 // shortcuts (ChunkProvider residentSlots, Entity::chunkListRefs, validated
 // entity sections) and log "shortcut mismatch" if the answers differ.

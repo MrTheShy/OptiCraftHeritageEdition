@@ -131,7 +131,9 @@
 // config flip onto a pacing path that already existed and was previously
 // unused. Rollback is this line alone -- set back to 0 to restore the exact
 // uncapped behavior; nothing else in Display_ps2.cpp changes.
+#ifndef PS2_TARGET_FPS // -DPS2_TARGET_FPS=0 for uncapped measurement builds
 #define PS2_TARGET_FPS 30
+#endif
 
 // Tessellator backend facts. The GS path consumes native quads and the console
 // heap cannot afford the desktop 8 MB scratch buffer. Keep these values in the

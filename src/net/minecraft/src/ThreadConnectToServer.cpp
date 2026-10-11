@@ -2,6 +2,7 @@
 
 #include "platform/Log.h"
 #ifdef PS2_PLATFORM
+#include "ps2/network/Ps2Network.h"
 #include "ps2/system/Ps2ThreadPriority.h"
 #endif
 #include <exception>
@@ -51,6 +52,9 @@ void ThreadConnectToServer::start()
 void ThreadConnectToServer::cancel()
 {
 	cancelled.store(true);
+#ifdef PS2_PLATFORM
+	Ps2Network::cancelPendingConnect(); // stops the connect() retry wait
+#endif
 }
 
 NetClientHandler *ThreadConnectToServer::takeHandler()
