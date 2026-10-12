@@ -18,6 +18,8 @@ public:
 	int referenceCount;
 	int textureName;
 	bool textureSetupComplete;
+	// Deleting the data waits for its download; this says whether it would.
+	bool downloadFinished() const;
 
 private:
 	ThreadDownloadImage *downloadThread;

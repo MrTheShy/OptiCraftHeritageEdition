@@ -228,6 +228,9 @@ RenderEngine::~RenderEngine()
 	for (auto &entry : urlToImageDataMap)
 		delete entry.second;
 	urlToImageDataMap.clear();
+	for (ThreadDownloadImageData *data : finishingImageData)
+		delete data;
+	finishingImageData.clear();
 }
 
 std::vector<int_t> RenderEngine::readTextureImageData(const std::string &s)
@@ -1713,6 +1716,7 @@ int_t RenderEngine::getTextureForDownloadableImage(const std::string &s, const s
 
 ThreadDownloadImageData *RenderEngine::obtainImageData(const std::string &s, ImageBuffer *imagebuffer)
 {
+	reapFinishedImageData();
 	auto it = urlToImageDataMap.find(s);
 	if (it == urlToImageDataMap.end())
 	{
@@ -1738,8 +1742,29 @@ void RenderEngine::releaseImageData(const std::string &s)
 	{
 		if (data->textureName >= 0)
 			deleteTexture(data->textureName);
-		delete data;
+		data->textureName = -1;
 		urlToImageDataMap.erase(it);
+		if (data->downloadFinished())
+			delete data;
+		else
+			finishingImageData.push_back(data);
+	}
+	reapFinishedImageData();
+}
+
+void RenderEngine::reapFinishedImageData()
+{
+	for (auto it = finishingImageData.begin(); it != finishingImageData.end();)
+	{
+		if ((*it)->downloadFinished())
+		{
+			delete *it;
+			it = finishingImageData.erase(it);
+		}
+		else
+		{
+			++it;
+		}
 	}
 }
 

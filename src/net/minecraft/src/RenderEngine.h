@@ -131,6 +131,10 @@ private:
 	std::map<TextureFX *, bool> textureFxFrameAnaglyph;
 	std::vector<TextureFX *> ownedTextureFx;
 	std::map<std::string, ThreadDownloadImageData *> urlToImageDataMap;
+	// Released while still downloading: deleted once the download ends, so a
+	// release never waits on the network.
+	std::vector<ThreadDownloadImageData *> finishingImageData;
+	void reapFinishedImageData();
 	GameSettings *options;
 	bool dynamicTexturesUpdated;
 	int_t dynamicTextureTickCounter;
