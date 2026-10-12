@@ -9,6 +9,7 @@
 // Built-in mods
 #include "toomanyitems/TooManyItemsMod.h"
 #include "reiminimap/ReiMinimapMod.h"
+#include "serverextras/ServerExtrasMod.h"
 #include "strongholdlocator/StrongholdLocatorMod.h"
 
 #include <algorithm>
@@ -44,6 +45,10 @@ void ModManager::init(Minecraft *mcInstance)
     {
         registerMod(std::make_unique<StrongholdLocatorMod>());
     }
+
+    // Built-in: client side of the optional OC|* server plugin channels.
+    if (getMod("serverextras") == nullptr)
+        registerMod(std::make_unique<ServerExtrasMod>());
 
     // Scan and load installed .ochpack packages from the persistent game mods directory
     scanAndLoadPacks();
