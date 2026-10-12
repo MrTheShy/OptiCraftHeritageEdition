@@ -8,7 +8,7 @@
 namespace JavaNetwork
 {
 
-bool readUrl(const std::string &, std::vector<unsigned char> &)
+bool readUrl(const std::string &, std::vector<unsigned char> &, std::size_t)
 {
     return false;
 }

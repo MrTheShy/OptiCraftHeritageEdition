@@ -13,7 +13,7 @@ namespace JavaNetwork
 std::unique_ptr<Socket> createSocket()                                    { return nullptr; }
 std::unique_ptr<std::istream> createInputStream(Socket &)                 { return nullptr; }
 std::unique_ptr<std::ostream> createOutputStream(Socket &)                { return nullptr; }
-bool readUrl(const std::string &, std::vector<unsigned char> &)           { return false; }
+bool readUrl(const std::string &, std::vector<unsigned char> &, std::size_t) { return false; }
 int  getResponseCode(const std::string &)                                 { return -1; }
 bool postUrl(const std::string &, const std::string &, const std::string &,
              std::vector<unsigned char> &)                              { return false; }
@@ -361,7 +361,7 @@ namespace
 // Minimal HTTP/1.0 GET over SDL_net. Returns the HTTP status code (or -1 on a
 // connection/parse failure) and fills body with the response payload.
 // Only plain http:// is supported — SDL_net has no TLS, so https is rejected.
-int httpGet(const std::string &url, std::vector<unsigned char> &body)
+int httpGet(const std::string &url, std::vector<unsigned char> &body, std::size_t maxBytes)
 {
     const std::string scheme = "http://";
     if (url.rfind(scheme, 0) != 0)
@@ -403,15 +403,40 @@ int httpGet(const std::string &url, std::vector<unsigned char> &body)
         requestOffset += sent;
     }
 
+    // Bounded: a server-chosen URL (skins) must not stall the caller or fill
+    // memory. The read ends 15 s after it starts or past maxBytes plus headers.
+    constexpr Uint32 kDeadlineMs = 15000;
+    constexpr std::size_t kMaxHeaderBytes = 16u * 1024u;
+    const Uint32 startMs = SDL_GetTicks();
+    SDLNet_SocketSet readSet = SDLNet_AllocSocketSet(1);
+    if (readSet == nullptr)
+    {
+        SDLNet_TCP_Close(socket);
+        return -1;
+    }
+    SDLNet_TCP_AddSocket(readSet, socket);
     std::string raw;
     char chunk[2048];
     for (;;)
     {
+        const Uint32 elapsedMs = SDL_GetTicks() - startMs;
+        if (elapsedMs >= kDeadlineMs || SDLNet_CheckSockets(readSet, kDeadlineMs - elapsedMs) <= 0)
+        {
+            raw.clear(); // a response cut short is not a response
+            break;
+        }
         int count = SDLNet_TCP_Recv(socket, chunk, sizeof(chunk));
         if (count <= 0)
             break;
         raw.append(chunk, count);
+        if (raw.size() > maxBytes + kMaxHeaderBytes)
+        {
+            raw.clear();
+            break;
+        }
     }
+    if (readSet != nullptr)
+        SDLNet_FreeSocketSet(readSet);
     SDLNet_TCP_Close(socket);
 
     if (raw.empty())
@@ -508,11 +533,13 @@ int httpPost(const std::string &url, const std::string &contentType,
 
 }
 
-bool readUrl(const std::string &url, std::vector<unsigned char> &data)
+bool readUrl(const std::string &url, std::vector<unsigned char> &data, std::size_t maxBytes)
 {
     if (url.rfind("http://", 0) == 0)
     {
-        int status = httpGet(url, data);
+        int status = httpGet(url, data, maxBytes);
+        if (data.size() > maxBytes)
+            return false;
         return status >= 200 && status < 300;
     }
 
@@ -544,7 +571,7 @@ int getResponseCode(const std::string &url)
     if (url.rfind("http://", 0) == 0)
     {
         std::vector<unsigned char> body;
-        return httpGet(url, body);
+        return httpGet(url, body, 8u * 1024u * 1024u);
     }
 
     std::vector<unsigned char> data;
