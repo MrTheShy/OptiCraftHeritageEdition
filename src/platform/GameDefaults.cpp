@@ -35,6 +35,10 @@ const PlatformGameDefaults& platformGameDefaults()
         // Power saver sleep before the swap only pushes frames to the next
         // vblank. Chunk updates stay bounded by the per-frame limit either way.
         d.limitFramerate = 1;
+#elif defined(VITA_PLATFORM)
+        // Balanced (vsync 60): the worker threads and the VBO terrain hold it;
+        // Power saver (30) is still one tap away for battery.
+        d.limitFramerate = 1;
 #else
         d.limitFramerate = 2;
 #endif

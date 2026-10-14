@@ -83,6 +83,12 @@
 #  define PLATFORM_TERRAIN_DENSITY_OCTAVES              16
 #  undef  PLATFORM_TERRAIN_SELECT_OCTAVES
 #  define PLATFORM_TERRAIN_SELECT_OCTAVES               8
+
+// Fresh-install defaults that show the port as it runs now: Normal distance
+// (the renderer keeps the budget), see GameDefaults.cpp for the 60 fps cap
+// and GameSettings.cpp for the terrain shader.
+#  undef  PLATFORM_DEFAULT_RENDER_DISTANCE
+#  define PLATFORM_DEFAULT_RENDER_DISTANCE              1
 #  undef  PLATFORM_POPULATE_WATER_SPRINGS
 #  define PLATFORM_POPULATE_WATER_SPRINGS               50
 #  undef  PLATFORM_POPULATE_LAVA_SPRINGS

@@ -187,7 +187,11 @@ void GameSettings::setDefaults()
     ofSunMoon = true;
     ofDepthFog = true;
     ofFastTerrain = true;
+#ifdef VITA_PLATFORM
+    ofTerrainShader = true; // faster than vitaGL fixed function and carries the held light
+#else
     ofTerrainShader = false;
+#endif
     ofShaderEnhanced = false;
     showHeldItemName = false;
     ofEntityShader = false; // off until the on-device colour bug is fixed
